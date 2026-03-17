@@ -67,7 +67,8 @@
       "Bash(node -e \"const fs=require\\(''fs''\\); const buf=fs.readFileSync\\(''logo.png''\\); const w=buf.readUInt32BE\\(16\\); const h=buf.readUInt32BE\\(20\\); console.log\\(w+''x''+h, buf.length+''bytes''\\)\")",
       "Bash(npx --yes electron-icon-builder --input=./logo.png --output=./resources --flatten)",
       "Bash(set CSC_IDENTITY_AUTO_DISCOVERY=false)",
-      "Bash(CSC_IDENTITY_AUTO_DISCOVERY=false npm run package)"
+      "Bash(CSC_IDENTITY_AUTO_DISCOVERY=false npm run package)",
+      "Bash(node -e \"require\\(''''electron-updater''''\\); console.log\\(''''ok''''\\)\")"
     ]
   }
 }
