@@ -29,30 +29,8 @@ jobs:
       - name: Build (electron-vite)
         run: npm run build
 
-      - name: Package Windows installer
-        run: npx electron-builder --win --x64 --publish never
+      - name: Package & publish Windows installer
+        run: npx electron-builder --win --x64 --publish always
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: "Abapfy ${{ github.ref_name }}"
-          draft: false
-          prerelease: false
-          generate_release_notes: true
-          body: |
-            ## Abapfy ${{ github.ref_name }}
-
-            ### Instalação
-            1. Baixe o arquivo `Abapfy-Setup-*.exe`
-            2. Execute o instalador
-            3. Configure um provedor de IA em **Configurações → IA & APIs**
-            4. Crie as tabelas no Supabase conforme o [README](https://github.com/${{ github.repository }}#-banco-de-dados-supabase)
-
-            ### O que há de novo
-            Veja o [CHANGELOG](https://github.com/${{ github.repository }}#-changelog) no README.
-          files: |
-            dist/Abapfy-Setup-*.exe
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -13,6 +13,7 @@ import AboutView from './AboutView'
 import AbapView from './AbapView'
 import CodeReviewView from './CodeReviewView'
 import EspecificacoesView from './EspecificacoesView'
+import AtualizacoesView from './AtualizacoesView'
 
 function DashboardHome() {
   const navigate = useNavigate()
@@ -85,7 +86,7 @@ function DashboardHome() {
           Bem-vindo, {displayName}
         </h1>
         <p style={{ fontSize: 14, color: 'var(--sap-subtle)', margin: '4px 0 0' }}>
-          Painel de controle — Abapfy v1.0.1
+          Painel de controle — Abapfy v1.0.2
         </p>
       </div>
 
@@ -221,6 +222,7 @@ export default function DashboardView() {
             <Route path="code-review" element={<CodeReviewView />} />
             <Route path="specs" element={<EspecificacoesView />} />
             <Route path="settings/*" element={<SettingsView />} />
+            <Route path="updates" element={<AtualizacoesView />} />
             <Route path="about" element={<AboutView />} />
           </Routes>
         </main>

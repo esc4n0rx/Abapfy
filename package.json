@@ -1,6 +1,6 @@
 {
   "name": "abapfy",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Abapfy — Um conjunto de ferramentas para a área SAP",
   "author": {
     "name": "Paulo Oliveira",
@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.76",
+    "electron-updater": "^6.3.9",
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^3.0.0",
     "@supabase/supabase-js": "^2.39.0",
@@ -36,6 +37,11 @@
   "build": {
     "appId": "com.abapfy.app",
     "productName": "Abapfy",
+    "publish": {
+      "provider": "github",
+      "owner": "esc4n0rx",
+      "repo": "Abapfy"
+    },
     "directories": {
       "output": "dist"
     },

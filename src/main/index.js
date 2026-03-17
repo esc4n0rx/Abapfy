@@ -6,6 +6,12 @@ import * as fs from 'fs'
 import * as nodePath from 'path'
 import * as os from 'os'
 import PizZip from 'pizzip'
+import { autoUpdater } from 'electron-updater'
+
+// ─── Configuração do autoUpdater ─────────────────────────────────────────────
+autoUpdater.autoDownload = false         // Usuário decide quando baixar
+autoUpdater.autoInstallOnAppQuit = true  // Instala automaticamente ao fechar
+autoUpdater.allowPrerelease = false
 
 let mainWindow
 
@@ -683,7 +689,68 @@ app.whenReady().then(() => {
     }
   })
 
+  // ─── Versão do app ───────────────────────────────────────────────────────────
+  ipcMain.handle('get-app-version', () => app.getVersion())
+
+  // ─── Auto-updater: eventos → renderer ────────────────────────────────────────
+  const sendUpdate = (channel, data) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(channel, data)
+    }
+  }
+
+  autoUpdater.on('checking-for-update', () => {
+    sendUpdate('update-checking', {})
+  })
+  autoUpdater.on('update-available', (info) => {
+    sendUpdate('update-available', info)
+    notify('⬆ Atualização disponível', `Abapfy v${info.version} está disponível`)
+  })
+  autoUpdater.on('update-not-available', (info) => {
+    sendUpdate('update-not-available', info)
+  })
+  autoUpdater.on('download-progress', (progress) => {
+    sendUpdate('update-download-progress', progress)
+  })
+  autoUpdater.on('update-downloaded', (info) => {
+    sendUpdate('update-downloaded', info)
+    notify('✓ Atualização pronta', 'Reinicie o app para instalar a v' + info.version)
+  })
+  autoUpdater.on('error', (err) => {
+    sendUpdate('update-error', { message: err.message })
+  })
+
+  // ─── Auto-updater: IPC handlers ───────────────────────────────────────────────
+  ipcMain.handle('update-check', async () => {
+    if (is.dev) return { success: false, dev: true, error: 'Auto-update desativado em modo desenvolvimento' }
+    try {
+      await autoUpdater.checkForUpdates()
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  ipcMain.handle('update-download', async () => {
+    if (is.dev) return { success: false, dev: true }
+    try {
+      await autoUpdater.downloadUpdate()
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  ipcMain.handle('update-install', () => {
+    autoUpdater.quitAndInstall(false, true)
+  })
+
   createWindow()
+
+  // Verifica atualizações 4s após o app abrir (somente em produção)
+  if (!is.dev) {
+    setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 4000)
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

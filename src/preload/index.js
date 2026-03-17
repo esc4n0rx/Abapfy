@@ -33,7 +33,27 @@ const api = {
   openEfFile: (payload) => ipcRenderer.invoke('ef-open-file', payload),
 
   // ─── Notificações nativas ───────────────────────────────────────────────────
-  notify: (payload) => ipcRenderer.invoke('show-notification', payload)
+  notify: (payload) => ipcRenderer.invoke('show-notification', payload),
+
+  // ─── Auto-updater ───────────────────────────────────────────────────────────
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  checkForUpdate: () => ipcRenderer.invoke('update-check'),
+  downloadUpdate: () => ipcRenderer.invoke('update-download'),
+  installUpdate: () => ipcRenderer.invoke('update-install'),
+  onUpdateChecking:     (cb) => ipcRenderer.on('update-checking',          (_, d) => cb(d)),
+  onUpdateAvailable:    (cb) => ipcRenderer.on('update-available',         (_, d) => cb(d)),
+  onUpdateNotAvailable: (cb) => ipcRenderer.on('update-not-available',     (_, d) => cb(d)),
+  onUpdateProgress:     (cb) => ipcRenderer.on('update-download-progress', (_, d) => cb(d)),
+  onUpdateDownloaded:   (cb) => ipcRenderer.on('update-downloaded',        (_, d) => cb(d)),
+  onUpdateError:        (cb) => ipcRenderer.on('update-error',             (_, d) => cb(d)),
+  removeUpdateListeners: () => {
+    ipcRenderer.removeAllListeners('update-checking')
+    ipcRenderer.removeAllListeners('update-available')
+    ipcRenderer.removeAllListeners('update-not-available')
+    ipcRenderer.removeAllListeners('update-download-progress')
+    ipcRenderer.removeAllListeners('update-downloaded')
+    ipcRenderer.removeAllListeners('update-error')
+  }
 }
 
 if (process.contextIsolated) {

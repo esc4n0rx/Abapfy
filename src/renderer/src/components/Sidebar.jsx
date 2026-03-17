@@ -1,5 +1,6 @@
 import React from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import { useUpdateStore } from '../store/updateStore'
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: '⊞', path: '/dashboard' },
@@ -7,12 +8,14 @@ const NAV_ITEMS = [
   { id: 'code-review', label: 'Code Review', icon: '🔍', path: '/dashboard/code-review' },
   { id: 'specs', label: 'Especificações', icon: '📋', path: '/dashboard/specs' },
   { id: 'settings', label: 'Configurações', icon: '⚒', path: '/dashboard/settings' },
+  { id: 'updates', label: 'Atualizações', icon: '⬆', path: '/dashboard/updates' },
   { id: 'about', label: 'Sobre', icon: 'ℹ', path: '/dashboard/about' }
 ]
 
 export default function Sidebar({ collapsed = false }) {
   const navigate = useNavigate()
   const location = useLocation()
+  const { updateAvailable } = useUpdateStore()
 
   return (
     <aside
@@ -39,6 +42,7 @@ export default function Sidebar({ collapsed = false }) {
               isActive={isActive}
               collapsed={collapsed}
               onClick={() => navigate(item.path)}
+              badge={item.id === 'updates' && updateAvailable}
             />
           )
         })}
@@ -47,7 +51,7 @@ export default function Sidebar({ collapsed = false }) {
   )
 }
 
-function SidebarItem({ item, isActive, collapsed, onClick }) {
+function SidebarItem({ item, isActive, collapsed, onClick, badge }) {
   const [hover, setHover] = React.useState(false)
 
   return (
@@ -77,17 +81,32 @@ function SidebarItem({ item, isActive, collapsed, onClick }) {
         overflow: 'hidden'
       }}
     >
-      <span style={{
-        width: 20, height: 20, flexShrink: 0,
+      <span style={{ position: 'relative', width: 20, height: 20, flexShrink: 0,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontSize: 15, lineHeight: 1,
         opacity: isActive ? 1 : 0.6
       }}>
         {item.icon}
+        {badge && (
+          <span style={{
+            position: 'absolute', top: -2, right: -2,
+            width: 7, height: 7, borderRadius: '50%',
+            background: '#e9730c', border: '1.5px solid var(--sap-base)'
+          }} />
+        )}
       </span>
       {!collapsed && (
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.3 }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.3, flex: 1 }}>
           {item.label}
+        </span>
+      )}
+      {!collapsed && badge && (
+        <span style={{
+          fontSize: 10, fontWeight: 700, color: '#fff',
+          background: '#e9730c', borderRadius: 10,
+          padding: '1px 6px', flexShrink: 0
+        }}>
+          Novo
         </span>
       )}
     </button>
