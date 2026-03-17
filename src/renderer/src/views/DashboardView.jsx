@@ -86,7 +86,7 @@ function DashboardHome() {
           Bem-vindo, {displayName}
         </h1>
         <p style={{ fontSize: 14, color: 'var(--sap-subtle)', margin: '4px 0 0' }}>
-          Painel de controle — Abapfy v1.0.4
+          Painel de controle — Abapfy v1.0.5
         </p>
       </div>
 
