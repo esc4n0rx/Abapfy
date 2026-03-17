@@ -62,7 +62,12 @@
       "Bash(ls -la /c/Users/paulo.oliveira/Desktop/\"Nova pasta \\(4\\)\"/src/preload)",
       "Bash(ls \"c:\\\\Users\\\\paulo.oliveira\\\\Desktop\\\\Nova pasta \\(4\\)\"\")",
       "Bash(ls 'c:\\\\Users\\\\paulo.oliveira\\\\Desktop\\\\Nova pasta \\(4\\)\\\\resources')",
-      "Bash(ls 'c:\\\\Users\\\\paulo.oliveira\\\\Desktop\\\\Nova pasta \\(4\\)\\\\src\\\\renderer\\\\src\\\\assets')"
+      "Bash(ls 'c:\\\\Users\\\\paulo.oliveira\\\\Desktop\\\\Nova pasta \\(4\\)\\\\src\\\\renderer\\\\src\\\\assets')",
+      "Bash(gh --version)",
+      "Bash(node -e \"const fs=require\\(''fs''\\); const buf=fs.readFileSync\\(''logo.png''\\); const w=buf.readUInt32BE\\(16\\); const h=buf.readUInt32BE\\(20\\); console.log\\(w+''x''+h, buf.length+''bytes''\\)\")",
+      "Bash(npx --yes electron-icon-builder --input=./logo.png --output=./resources --flatten)",
+      "Bash(set CSC_IDENTITY_AUTO_DISCOVERY=false)",
+      "Bash(CSC_IDENTITY_AUTO_DISCOVERY=false npm run package)"
     ]
   }
 }

@@ -2,6 +2,10 @@
   "name": "abapfy",
   "version": "1.0.1",
   "description": "Abapfy — Um conjunto de ferramentas para a área SAP",
+  "author": {
+    "name": "Paulo Oliveira",
+    "email": "paulo.android99@gmail.com"
+  },
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -45,16 +49,29 @@
       }
     ],
     "win": {
-      "target": "nsis",
-      "icon": "resources/icon.ico"
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "resources/icon.ico",
+      "artifactName": "Abapfy-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "resources/icon.ico",
+      "uninstallerIcon": "resources/icon.ico",
+      "installerHeaderIcon": "resources/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Abapfy"
     },
     "mac": {
       "target": "dmg",
-      "icon": "resources/icon.icns"
+      "icon": "resources/icon.icns",
+      "artifactName": "Abapfy-${version}.${ext}"
     },
     "linux": {
       "target": "AppImage",
-      "icon": "resources/icon.png"
+      "icon": "resources/icons",
+      "artifactName": "Abapfy-${version}.${ext}"
     }
   }
 }
