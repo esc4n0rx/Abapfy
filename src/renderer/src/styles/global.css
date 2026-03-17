@@ -1,0 +1,252 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+/* ── Light theme (default) ─────────────────────── */
+:root {
+  --sap-shell:    #354a5e;
+  --sap-primary:  #0070f2;
+  --sap-bg:       #f5f6f7;
+  --sap-base:     #ffffff;
+  --sap-base2:    #f0f1f2;
+  --sap-text:     #32363a;
+  --sap-border:   #d9d9d9;
+  --sap-subtle:   #6a6d70;
+  --sap-positive: #107e3e;
+  --sap-negative: #bb0000;
+  --sap-critical: #e9730c;
+  --sap-active-bg:#e8f2ff;
+  --sap-hover-bg: #f0f1f2;
+  --sap-input-bg: #fafafa;
+  --sap-shadow:   rgba(0, 0, 0, 0.08);
+  --font: "72", "Inter", Arial, Helvetica, sans-serif;
+  --app-font-size: 14px;
+  --radius: 8px;
+}
+
+/* ── Dark theme ─────────────────────────────────── */
+[data-theme="dark"] {
+  --sap-shell:    #1b2a38;
+  --sap-primary:  #3399ff;
+  --sap-bg:       #121212;
+  --sap-base:     #1e1e1e;
+  --sap-base2:    #2a2a2a;
+  --sap-text:     #e8e8e8;
+  --sap-border:   #3a3a3a;
+  --sap-subtle:   #8a8a8a;
+  --sap-positive: #30d158;
+  --sap-negative: #ff453a;
+  --sap-critical: #ff9f0a;
+  --sap-active-bg:#1a3a5c;
+  --sap-hover-bg: #2a2a2a;
+  --sap-input-bg: #2a2a2a;
+  --sap-shadow:   rgba(0, 0, 0, 0.35);
+}
+
+/* ── Reset ──────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font);
+  font-size: var(--app-font-size);
+  color: var(--sap-text);
+  background: transparent;
+}
+
+#root {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  border-radius: 10px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.35);
+}
+
+button { font-family: var(--font); }
+input  { font-family: var(--font); }
+
+/* ── Scrollbar ──────────────────────────────────── */
+::-webkit-scrollbar       { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--sap-bg); }
+::-webkit-scrollbar-thumb {
+  background: var(--sap-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--sap-subtle); }
+
+/* ── Splash spinner ─────────────────────────────── */
+.splash-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(255,255,255,0.2);
+  border-top-color: #0070f2;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Settings tabs / shared UI ──────────────────── */
+.settings-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--sap-bg);
+  color: var(--sap-text);
+}
+
+.tab-bar {
+  display: flex;
+  border-bottom: 2px solid var(--sap-border);
+  background: var(--sap-base);
+  padding: 0 24px;
+  flex-shrink: 0;
+}
+
+.tab-btn {
+  padding: 12px 20px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--sap-subtle);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: all 0.15s;
+}
+.tab-btn:hover  { color: var(--sap-text); }
+.tab-btn.active {
+  color: var(--sap-primary);
+  font-weight: 600;
+  border-bottom-color: var(--sap-primary);
+}
+
+.settings-section {
+  background: var(--sap-base);
+  border: 1px solid var(--sap-border);
+  border-radius: var(--radius);
+  padding: 24px;
+  margin-bottom: 16px;
+}
+
+.settings-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sap-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 16px;
+}
+
+.btn-group {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--sap-border);
+  border-radius: 6px;
+  overflow: hidden;
+  display: inline-flex;
+}
+
+.btn-group-item {
+  padding: 8px 20px;
+  border: none;
+  background: var(--sap-base);
+  color: var(--sap-text);
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.15s;
+  border-right: 1px solid var(--sap-border);
+}
+.btn-group-item:last-child { border-right: none; }
+.btn-group-item:hover { background: var(--sap-hover-bg); }
+.btn-group-item.active {
+  background: var(--sap-primary);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+/* ── Markdown body (.md-body) ───────────────────────── */
+.md-body {
+  color: var(--sap-text);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.md-body h1 {
+  font-size: 18px; font-weight: 700;
+  color: var(--sap-text); margin: 0 0 16px;
+  padding-bottom: 8px; border-bottom: 2px solid var(--sap-border);
+}
+.md-body h2 {
+  font-size: 14px; font-weight: 700;
+  color: var(--sap-text); margin: 20px 0 10px;
+  text-transform: uppercase; letter-spacing: 0.4px;
+}
+.md-body h3 {
+  font-size: 13px; font-weight: 600;
+  color: var(--sap-text); margin: 14px 0 8px;
+}
+.md-body p { margin: 0 0 10px; }
+.md-body ul, .md-body ol {
+  margin: 0 0 10px; padding-left: 20px;
+}
+.md-body li { margin-bottom: 3px; }
+.md-body hr {
+  border: none; border-top: 1px solid var(--sap-border);
+  margin: 16px 0;
+}
+.md-body blockquote {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-left: 3px solid var(--sap-primary);
+  background: var(--sap-hover-bg);
+  border-radius: 0 4px 4px 0;
+  color: var(--sap-subtle);
+  font-style: italic;
+}
+.md-body code {
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 12px;
+  background: var(--sap-base2);
+  border: 1px solid var(--sap-border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  color: var(--sap-text);
+}
+.md-body pre {
+  background: var(--sap-base2);
+  border: 1px solid var(--sap-border);
+  border-radius: 5px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  margin: 0 0 12px;
+}
+.md-body pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.md-body table {
+  width: 100%; border-collapse: collapse;
+  margin: 0 0 12px; font-size: 12px;
+}
+.md-body th {
+  background: var(--sap-hover-bg);
+  border: 1px solid var(--sap-border);
+  padding: 7px 12px; text-align: left;
+  font-weight: 600; color: var(--sap-text);
+}
+.md-body td {
+  border: 1px solid var(--sap-border);
+  padding: 6px 12px; color: var(--sap-text);
+}
+.md-body tr:nth-child(even) td { background: var(--sap-hover-bg); }
+.md-body strong { font-weight: 700; color: var(--sap-text); }
+.md-body a { color: var(--sap-primary); text-decoration: none; }
+.md-body a:hover { text-decoration: underline; }
