@@ -166,30 +166,6 @@ user_ai_providers (id, user_id, provider, api_key, model, enabled, updated_at)
 user_agents (id, user_id, name, prompt, created_at)
 ```
 
-### Migration — Especificações Funcionais
-
-```sql
-CREATE TABLE IF NOT EXISTS user_ef_specs (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-  project_name TEXT,
-  author TEXT,
-  client_name TEXT,
-  context_input TEXT,
-  generated_content JSONB,
-  status TEXT DEFAULT 'generated',
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-ALTER TABLE user_ef_specs ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "Users own their EF specs"
-  ON user_ef_specs FOR ALL
-  USING (auth.uid() = user_id);
-```
-
----
-
 ## 🚀 Como Rodar
 
 ### Pré-requisitos
@@ -202,7 +178,7 @@ CREATE POLICY "Users own their EF specs"
 
 ```bash
 # Clonar o repositório
-git clone https://github.com/seu-usuario/abapfy.git
+git clone https://github.com/esc4n0rx/abapfy.git
 cd abapfy
 
 # Instalar dependências
