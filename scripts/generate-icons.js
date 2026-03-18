@@ -1,8 +1,8 @@
 /**
  * Gera resources/icon.ico a partir de resources/icon.png
- * Executado como passo pre-build pelo GitHub Actions e localmente.
+ * Execute manualmente ao atualizar o ícone: npm run generate-icons
+ * IMPORTANTE: resources/icon.png deve ser uma imagem QUADRADA (ex: 512x512).
  */
-const { execSync } = require('child_process')
 const path = require('path')
 const fs = require('fs')
 
@@ -14,21 +14,14 @@ if (!fs.existsSync(src)) {
   process.exit(1)
 }
 
-// Instala png-to-ico sob demanda se necessário
-try {
-  require.resolve('png-to-ico')
-} catch {
-  console.log('[generate-icons] Instalando png-to-ico...')
-  execSync('npm install --no-save png-to-ico', { cwd: root, stdio: 'inherit' })
-}
-
-const pngToIco = require('png-to-ico')
+const _mod = require('png-to-ico')
+const pngToIco = typeof _mod === 'function' ? _mod : (_mod.default ?? _mod)
 
 pngToIco(src)
   .then((buf) => {
     const dest = path.join(root, 'resources', 'icon.ico')
     fs.writeFileSync(dest, buf)
-    console.log(`[generate-icons] icon.ico gerado em ${dest}`)
+    console.log(`[generate-icons] icon.ico gerado: ${dest}`)
   })
   .catch((err) => {
     console.error('[generate-icons] Erro:', err.message)

@@ -10,16 +10,16 @@
   "scripts": {
     "dev": "electron-vite dev",
     "generate-icons": "node scripts/generate-icons.js",
-    "build": "node scripts/generate-icons.js && electron-vite build",
+    "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "package": "node scripts/generate-icons.js && electron-vite build && electron-builder"
+    "package": "electron-vite build && electron-builder"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.76",
-    "electron-updater": "^6.3.9",
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^3.0.0",
     "@supabase/supabase-js": "^2.39.0",
+    "electron-updater": "^6.3.9",
     "pizzip": "^3.2.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -33,6 +33,7 @@
     "electron": "^28.2.0",
     "electron-builder": "^24.9.1",
     "electron-vite": "^2.0.0",
+    "png-to-ico": "^2.1.8",
     "vite": "^5.0.12"
   },
   "build": {
@@ -57,7 +58,14 @@
       }
     ],
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "resources/icon.ico",
       "artifactName": "Abapfy-Setup-${version}.${ext}"
     },
