@@ -10,7 +10,14 @@ export const useAuthStore = create((set, get) => ({
   initialize: async () => {
     set({ loading: true })
     try {
-      const { data: { session } } = await supabase.auth.getSession()
+      // Timeout de 10s para evitar hang infinito quando Supabase não responde
+      const timeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Conexão com Supabase expirou (10s). Verifique sua internet.')), 10000)
+      )
+      const { data: { session } } = await Promise.race([
+        supabase.auth.getSession(),
+        timeout
+      ])
       set({
         session,
         user: session?.user ?? null,

@@ -1,6 +1,6 @@
 {
   "name": "abapfy",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Abapfy — Um conjunto de ferramentas para a área SAP",
   "author": {
     "name": "Paulo Oliveira",
@@ -9,9 +9,10 @@
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "generate-icons": "node scripts/generate-icons.js",
+    "build": "node scripts/generate-icons.js && electron-vite build",
     "preview": "electron-vite preview",
-    "package": "electron-vite build && electron-builder"
+    "package": "node scripts/generate-icons.js && electron-vite build && electron-builder"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.76",
