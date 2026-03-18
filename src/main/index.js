@@ -21,7 +21,7 @@ function createWindow() {
     height: 800,
     minWidth: 960,
     minHeight: 600,
-    show: false,
+    show: true,
     frame: false,
     transparent: true,
     roundedCorners: true,
@@ -32,19 +32,6 @@ function createWindow() {
       sandbox: false,
       contextIsolation: true
     }
-  })
-
-  // Fallback: garante que a janela aparece mesmo se ready-to-show demorar
-  const showFallbackTimer = setTimeout(() => {
-    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
-      console.warn('[Main] ready-to-show não disparou em 8s — forçando show()')
-      mainWindow.show()
-    }
-  }, 8000)
-
-  mainWindow.on('ready-to-show', () => {
-    clearTimeout(showFallbackTimer)
-    mainWindow.show()
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
