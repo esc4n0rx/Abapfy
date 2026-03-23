@@ -21,7 +21,7 @@ function createWindow() {
     height: 800,
     minWidth: 960,
     minHeight: 600,
-    show: true,
+    show: false,
     frame: false,
     transparent: true,
     roundedCorners: true,
@@ -32,6 +32,10 @@ function createWindow() {
       sandbox: false,
       contextIsolation: true
     }
+  })
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show()
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -69,11 +73,6 @@ function runCodexIntegration(fullPrompt) {
     proc.stdin.write(fullPrompt + '\n')
     proc.stdin.end()
 
-    const timeout = setTimeout(() => {
-      proc.kill()
-      reject(new Error('Codex timeout (120s). O processo foi encerrado.'))
-    }, 120000)
-
     let stderrBuf = ''
     proc.stderr.on('data', (chunk) => {
       stderrBuf += chunk.toString()
@@ -87,7 +86,6 @@ function runCodexIntegration(fullPrompt) {
     })
 
     proc.on('close', (code) => {
-      clearTimeout(timeout)
       console.log(`[CODEX] proc closed | code=${code} | stderr length=${stderrBuf.length}`)
       try {
         const content = fs.readFileSync(tmpOutput, 'utf-8').trim()
@@ -105,7 +103,6 @@ function runCodexIntegration(fullPrompt) {
     })
 
     proc.on('error', (err) => {
-      clearTimeout(timeout)
       console.error('[CODEX] proc error:', err.message)
       reject(new Error(`Erro ao iniciar Codex: ${err.message}. Verifique se o Codex CLI está instalado.`))
     })
@@ -361,41 +358,24 @@ app.whenReady().then(() => {
           throw new Error('Claude Code SDK não encontrado. Execute: npm install -g @anthropic-ai/claude-code')
         }
 
-        console.log('[AI-INTEGRATION] Iniciando query() com timeout de 180s...')
-        const TIMEOUT_MS = 180_000
+        console.log('[AI-INTEGRATION] Iniciando query()...')
         let msgCount = 0
 
-        // Wrapper com timeout para o for-await não ficar preso para sempre
-        const agentRace = new Promise(async (resolve, reject) => {
-          const timer = setTimeout(() => {
-            reject(new Error('Claude Code timeout (180s). Verifique se o CLI está instalado e autenticado: claude --version'))
-          }, TIMEOUT_MS)
-
-          try {
-            for await (const message of queryFn({
-              prompt: userMessage,
-              options: {
-                systemPrompt,
-                allowedTools: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'],
-                permissionMode: 'acceptEdits'
-              }
-            })) {
-              msgCount++
-              console.log(`[AI-INTEGRATION] Mensagem #${msgCount} | type=${message?.type} | keys=${Object.keys(message || {}).join(',')}`)
-              if (message && 'result' in message) {
-                console.log('[AI-INTEGRATION] ✔ ResultMessage recebido')
-                rawContent = message.result || ''
-              }
-            }
-            clearTimeout(timer)
-            resolve(rawContent)
-          } catch (err) {
-            clearTimeout(timer)
-            reject(err)
+        for await (const message of queryFn({
+          prompt: userMessage,
+          options: {
+            systemPrompt,
+            allowedTools: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'],
+            permissionMode: 'acceptEdits'
           }
-        })
-
-        rawContent = await agentRace
+        })) {
+          msgCount++
+          console.log(`[AI-INTEGRATION] Mensagem #${msgCount} | type=${message?.type} | keys=${Object.keys(message || {}).join(',')}`)
+          if (message && 'result' in message) {
+            console.log('[AI-INTEGRATION] ✔ ResultMessage recebido')
+            rawContent = message.result || ''
+          }
+        }
         console.log(`[AI-INTEGRATION] Claude finalizado. rawContent length=${rawContent.length}`)
 
       } else if (integrationType === 'codex') {
