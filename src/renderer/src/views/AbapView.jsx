@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import AbapHighlight from '../components/AbapHighlight'
 import { useAbapStore } from '../store/abapStore'
 import { useAiStore } from '../store/aiStore'
 import { useAuthStore } from '../store/authStore'
@@ -593,15 +594,7 @@ function FileCard({ file }) {
           {copied ? 'Copiado' : 'Copiar'}
         </button>
       </div>
-      <pre style={{
-        margin: 0, padding: '14px 16px', fontSize: 12, lineHeight: 1.6,
-        fontFamily: '"Courier New", Consolas, monospace',
-        background: 'var(--sap-base)', color: 'var(--sap-text)',
-        overflowX: 'auto', maxHeight: 320, overflowY: 'auto',
-        whiteSpace: 'pre', tabSize: 2
-      }}>
-        {file.content || ''}
-      </pre>
+      <AbapHighlight code={file.content || ''} maxHeight={320} />
     </div>
   )
 }

@@ -14,6 +14,12 @@ import AbapView from './AbapView'
 import CodeReviewView from './CodeReviewView'
 import EspecificacoesView from './EspecificacoesView'
 import AtualizacoesView from './AtualizacoesView'
+import HistoricoView from './HistoricoView'
+import SnippetLibraryView from './SnippetLibraryView'
+import DtecView from './DtecView'
+import EnhancementFinderView from './EnhancementFinderView'
+import PerformanceView from './PerformanceView'
+import ChatProjetoView from './ChatProjetoView'
 
 function DashboardHome() {
   const navigate = useNavigate()
@@ -22,6 +28,7 @@ function DashboardHome() {
   const { sessions, loadSessions } = useCodeReviewStore()
   const { specs, loadSpecs } = useEspecificacoesStore()
   const { providers, loadProviders } = useAiStore()
+  const [appVersion, setAppVersion] = useState('')
 
   const displayName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Usuário'
 
@@ -30,6 +37,7 @@ function DashboardHome() {
     loadSessions()
     loadSpecs()
     loadProviders()
+    window.api.getAppVersion().then(v => setAppVersion(v)).catch(() => {})
   }, [])
 
   const enabledProviders = Object.values(providers).filter((p) => p.enabled).length
@@ -75,6 +83,66 @@ function DashboardHome() {
       count: enabledProviders,
       countLabel: enabledProviders === 1 ? 'provedor ativo' : 'provedores ativos',
       active: true
+    },
+    {
+      name: 'Histórico',
+      icon: '🗂',
+      desc: 'Programas ABAP gerados anteriormente',
+      color: '#0070f2',
+      path: '/dashboard/historico',
+      count: programs.length,
+      countLabel: programs.length === 1 ? 'geração' : 'gerações',
+      active: true
+    },
+    {
+      name: 'Performance',
+      icon: '⚡',
+      desc: 'Analisa anti-patterns e gargalos no código',
+      color: '#c44a00',
+      path: '/dashboard/performance',
+      count: 0,
+      countLabel: '',
+      active: true
+    },
+    {
+      name: 'DTec',
+      icon: '📄',
+      desc: 'Gera documentação técnica a partir do código',
+      color: '#354a5e',
+      path: '/dashboard/dtec',
+      count: 0,
+      countLabel: '',
+      active: true
+    },
+    {
+      name: 'Enhancement Finder',
+      icon: '🔎',
+      desc: 'Encontra BAdIs e User Exits para sua customização',
+      color: '#8b5cf6',
+      path: '/dashboard/enhancement',
+      count: 0,
+      countLabel: '',
+      active: true
+    },
+    {
+      name: 'Snippets',
+      icon: '✂',
+      desc: 'Biblioteca de snippets ABAP reutilizáveis',
+      color: '#107e3e',
+      path: '/dashboard/snippets',
+      count: 0,
+      countLabel: '',
+      active: true
+    },
+    {
+      name: 'Chat Projeto',
+      icon: '💬',
+      desc: 'Chat IA com contexto dos seus arquivos ABAP',
+      color: '#3399ff',
+      path: '/dashboard/chat',
+      count: 0,
+      countLabel: '',
+      active: true
     }
   ]
 
@@ -86,7 +154,7 @@ function DashboardHome() {
           Bem-vindo, {displayName}
         </h1>
         <p style={{ fontSize: 14, color: 'var(--sap-subtle)', margin: '4px 0 0' }}>
-          Painel de controle — Abapfy v1.0.5
+          Painel de controle — Abapfy{appVersion ? ` v${appVersion}` : ''}
         </p>
       </div>
 
@@ -219,8 +287,14 @@ export default function DashboardView() {
           <Routes>
             <Route index element={<DashboardHome />} />
             <Route path="abap" element={<AbapView />} />
+            <Route path="historico" element={<HistoricoView />} />
             <Route path="code-review" element={<CodeReviewView />} />
+            <Route path="performance" element={<PerformanceView />} />
             <Route path="specs" element={<EspecificacoesView />} />
+            <Route path="dtec" element={<DtecView />} />
+            <Route path="enhancement" element={<EnhancementFinderView />} />
+            <Route path="snippets" element={<SnippetLibraryView />} />
+            <Route path="chat" element={<ChatProjetoView />} />
             <Route path="settings/*" element={<SettingsView />} />
             <Route path="updates" element={<AtualizacoesView />} />
             <Route path="about" element={<AboutView />} />

@@ -4,6 +4,7 @@ import { useAiStore } from '../store/aiStore'
 import { useAuthStore } from '../store/authStore'
 import { getActiveProvider, parseJSONResponse } from '../lib/aiClient'
 import efConsultantPromptRaw from '../agents/ef_consultant.md?raw'
+import effortEstimatorPromptRaw from '../agents/effort_estimator.md?raw'
 import { notify } from '../lib/notify'
 
 // ─── Mapeamento placeholder → chave JSON da IA ───────────────────────────────
@@ -546,6 +547,174 @@ export default function EspecificacoesView() {
   )
 }
 
+// ─── Componente: Estimativa de Esforço ───────────────────────────────────────
+function EffortSection({ content }) {
+  const { providers } = useAiStore()
+  const [effort, setEffort] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [err, setErr] = useState('')
+  const [open, setOpen] = useState(false)
+
+  async function handleEstimate() {
+    setErr(''); setLoading(true); setOpen(true)
+    try {
+      const provider = getActiveProvider(providers)
+      if (!provider) throw new Error('Nenhum provedor de IA configurado.')
+
+      const userMessage = `Estime o esforço de desenvolvimento para a seguinte Especificação Funcional SAP:\n\n` +
+        `**Projeto:** ${content.project_name || ''}\n` +
+        `**Cliente:** ${content.client_name || ''}\n\n` +
+        `**Visão Geral:**\n${content.macro_overview || ''}\n\n` +
+        `**Especificação Técnica:**\n${content.functional_spec || ''}`
+
+      let raw = ''
+      if (provider.isIntegration) {
+        const res = await window.api.generateIntegration({
+          integrationType: provider.integrationType,
+          systemPrompt: effortEstimatorPromptRaw,
+          userMessage,
+          programName: 'EFFORT_ESTIMATE'
+        })
+        if (!res.success) throw new Error(res.error)
+        raw = res.content
+      } else {
+        const res = await window.api.generateAI({
+          provider: provider.provider, apiKey: provider.apiKey,
+          model: provider.model, systemPrompt: effortEstimatorPromptRaw, userMessage
+        })
+        if (!res.success) throw new Error(res.error)
+        raw = res.content
+      }
+      setEffort(parseJSONResponse(raw))
+    } catch (e) { setErr(e.message) }
+    finally { setLoading(false) }
+  }
+
+  const COMPLEXITY_COLOR = { simples: '#107e3e', médio: '#e9730c', complexo: '#c44a00', 'muito complexo': '#bb0000' }
+  const IMPACT_COLOR = { baixo: '#107e3e', médio: '#e9730c', alto: '#bb0000' }
+
+  return (
+    <div style={{ marginTop: 24, border: '1px solid var(--sap-border)', borderRadius: 8, overflow: 'hidden' }}>
+      <div
+        onClick={() => { if (!effort && !loading) handleEstimate(); else setOpen(o => !o) }}
+        style={{
+          padding: '12px 16px', background: 'var(--sap-base)', cursor: 'pointer',
+          display: 'flex', alignItems: 'center', gap: 10,
+          borderBottom: open && (effort || loading || err) ? '1px solid var(--sap-border)' : 'none'
+        }}
+      >
+        <span style={{ fontSize: 16 }}>⏱</span>
+        <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--sap-text)', flex: 1 }}>
+          Estimativa de Esforço
+        </span>
+        {effort && (
+          <span style={{
+            fontSize: 12, fontWeight: 700, color: '#fff',
+            background: COMPLEXITY_COLOR[effort.complexity] || '#6a6d70',
+            padding: '2px 8px', borderRadius: 4
+          }}>{effort.complexity}</span>
+        )}
+        {effort && (
+          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--sap-primary)' }}>
+            {effort.total_hours}h
+          </span>
+        )}
+        {loading && <span style={{ fontSize: 12, color: 'var(--sap-subtle)' }}>Estimando...</span>}
+        {!effort && !loading && <span style={{ fontSize: 12, color: 'var(--sap-primary)' }}>Clique para estimar</span>}
+        <span style={{ color: 'var(--sap-subtle)', fontSize: 12 }}>{open ? '▲' : '▼'}</span>
+      </div>
+
+      {open && (
+        <div style={{ padding: 16, background: 'var(--sap-bg)' }}>
+          {loading && (
+            <div style={{ textAlign: 'center', padding: 20, color: 'var(--sap-subtle)', fontSize: 13 }}>
+              <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block', marginRight: 8 }}>⟳</span>
+              Analisando escopo e estimando esforço...
+            </div>
+          )}
+          {err && (
+            <div style={{ padding: '8px 12px', background: '#fff0f0', border: '1px solid #ffcccc', borderRadius: 6, color: '#bb0000', fontSize: 13 }}>
+              {err}
+            </div>
+          )}
+          {effort && (
+            <>
+              {/* Breakdown */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--sap-subtle)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 10 }}>
+                  Breakdown por fase
+                </div>
+                {(effort.breakdown || []).map((b, i) => {
+                  const pct = Math.round((b.hours / effort.total_hours) * 100)
+                  return (
+                    <div key={i} style={{ marginBottom: 8 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 3 }}>
+                        <span style={{ color: 'var(--sap-text)', fontWeight: 500 }}>{b.phase}</span>
+                        <span style={{ color: 'var(--sap-primary)', fontWeight: 700 }}>{b.hours}h</span>
+                      </div>
+                      <div style={{ height: 4, background: 'var(--sap-border)', borderRadius: 2 }}>
+                        <div style={{ height: '100%', width: `${pct}%`, background: 'var(--sap-primary)', borderRadius: 2, transition: 'width 0.4s' }} />
+                      </div>
+                      {b.description && <div style={{ fontSize: 11, color: 'var(--sap-subtle)', marginTop: 2 }}>{b.description}</div>}
+                    </div>
+                  )
+                })}
+                <div style={{
+                  marginTop: 12, padding: '8px 12px', background: 'var(--sap-base)',
+                  border: '1px solid var(--sap-border)', borderRadius: 6,
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--sap-text)' }}>Total estimado</span>
+                  <span style={{ fontSize: 18, fontWeight: 700, color: 'var(--sap-primary)' }}>{effort.total_hours}h</span>
+                </div>
+              </div>
+
+              {/* Risks */}
+              {effort.risks?.length > 0 && (
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--sap-subtle)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 8 }}>
+                    Riscos
+                  </div>
+                  {effort.risks.map((r, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
+                      <span style={{
+                        fontSize: 10, fontWeight: 700, color: '#fff', flexShrink: 0, marginTop: 1,
+                        background: IMPACT_COLOR[r.impact] || '#6a6d70',
+                        padding: '2px 6px', borderRadius: 3, textTransform: 'uppercase'
+                      }}>{r.impact}</span>
+                      <span style={{ fontSize: 13, color: 'var(--sap-text)' }}>{r.risk}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Assumptions */}
+              {effort.assumptions?.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--sap-subtle)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 8 }}>
+                    Premissas
+                  </div>
+                  {effort.assumptions.map((a, i) => (
+                    <div key={i} style={{ fontSize: 13, color: 'var(--sap-text)', marginBottom: 4, display: 'flex', gap: 6 }}>
+                      <span style={{ color: 'var(--sap-subtle)', flexShrink: 0 }}>•</span>{a}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <button onClick={handleEstimate} style={{
+                marginTop: 14, fontSize: 12, color: 'var(--sap-subtle)', background: 'transparent',
+                border: '1px solid var(--sap-border)', borderRadius: 4, padding: '4px 14px',
+                cursor: 'pointer', fontFamily: 'inherit'
+              }}>↺ Re-estimar</button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Componente: Preview do conteúdo gerado + ações ──────────────────────────
 function GeneratedPreview({ content, docPath, generatingDoc, saveError, onRegenerate, onSave, onGenerateDoc, onOpenDoc }) {
   return (
@@ -661,6 +830,8 @@ function GeneratedPreview({ content, docPath, generatingDoc, saveError, onRegene
           ✓ Documento Word gerado com sucesso!
         </div>
       )}
+
+      <EffortSection content={content} />
     </div>
   )
 }

@@ -3,13 +3,19 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { useUpdateStore } from '../store/updateStore'
 
 const NAV_ITEMS = [
-  { id: 'dashboard', label: 'Dashboard', icon: '⊞', path: '/dashboard' },
-  { id: 'abap', label: 'ABAP', icon: '◈', path: '/dashboard/abap' },
-  { id: 'code-review', label: 'Code Review', icon: '🔍', path: '/dashboard/code-review' },
-  { id: 'specs', label: 'Especificações', icon: '📋', path: '/dashboard/specs' },
-  { id: 'settings', label: 'Configurações', icon: '⚒', path: '/dashboard/settings' },
-  { id: 'updates', label: 'Atualizações', icon: '⬆', path: '/dashboard/updates' },
-  { id: 'about', label: 'Sobre', icon: 'ℹ', path: '/dashboard/about' }
+  { id: 'dashboard',    label: 'Dashboard',         icon: '⊞', path: '/dashboard' },
+  { id: 'abap',         label: 'ABAP',              icon: '◈', path: '/dashboard/abap' },
+  { id: 'historico',    label: 'Histórico',         icon: '🗂', path: '/dashboard/historico' },
+  { id: 'code-review',  label: 'Code Review',       icon: '🔍', path: '/dashboard/code-review' },
+  { id: 'performance',  label: 'Performance',       icon: '⚡', path: '/dashboard/performance' },
+  { id: 'specs',        label: 'Especificações',    icon: '📋', path: '/dashboard/specs' },
+  { id: 'dtec',         label: 'DTec',              icon: '📄', path: '/dashboard/dtec' },
+  { id: 'enhancement',  label: 'Enhancement',       icon: '🔎', path: '/dashboard/enhancement' },
+  { id: 'snippets',     label: 'Snippets',          icon: '✂', path: '/dashboard/snippets' },
+  { id: 'chat',         label: 'Chat Projeto',      icon: '💬', path: '/dashboard/chat' },
+  { id: 'settings',     label: 'Configurações',     icon: '⚒', path: '/dashboard/settings' },
+  { id: 'updates',      label: 'Atualizações',      icon: '⬆', path: '/dashboard/updates' },
+  { id: 'about',        label: 'Sobre',             icon: 'ℹ', path: '/dashboard/about' }
 ]
 
 export default function Sidebar({ collapsed = false }) {

@@ -1,9 +1,14 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useAuthStore } from '../store/authStore'
 import TitleBar from '../components/TitleBar'
 
 export default function LoginView() {
   const [tab, setTab] = useState('login')
+  const [appVersion, setAppVersion] = useState('')
+
+  useEffect(() => {
+    window.api.getAppVersion().then(v => setAppVersion(v)).catch(() => {})
+  }, [])
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [fullName, setFullName] = useState('')
@@ -167,7 +172,7 @@ export default function LoginView() {
       </div>
 
       <div style={{ marginTop: 20, fontSize: 11, color: 'rgba(255,255,255,0.3)' }}>
-        Abapfy v1.0.1
+        Abapfy{appVersion ? ` v${appVersion}` : ''}
       </div>
     </div>
   )
