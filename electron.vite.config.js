@@ -4,7 +4,10 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()]
+    plugins: [externalizeDepsPlugin()],
+    define: {
+      '__RELEASES_TOKEN__': JSON.stringify(process.env.RELEASES_TOKEN || '')
+    }
   },
   preload: {
     plugins: [externalizeDepsPlugin()]

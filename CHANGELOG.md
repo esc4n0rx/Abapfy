@@ -5,6 +5,14 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ---
 
+## [1.0.10] — 2026-03-23
+
+### Corrigido
+- **Auto-updater em repositório privado** — `electron-updater` falhava com 404 no `releases.atom` por falta de autenticação. Token `RELEASES_TOKEN` agora é injetado no build via `define` (electron-vite) e configurado em `autoUpdater.requestHeaders`
+- Workflow CI atualizado para passar `RELEASES_TOKEN` na etapa de build
+
+---
+
 ## [1.0.9] — 2026-03-23
 
 ### Adicionado

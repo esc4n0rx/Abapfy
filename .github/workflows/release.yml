@@ -44,6 +44,7 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN }}
 
       - name: Package & publish Windows installer
         run: npx electron-builder --win --x64 --publish always

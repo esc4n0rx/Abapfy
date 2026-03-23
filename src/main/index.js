@@ -13,6 +13,12 @@ autoUpdater.autoDownload = false         // Usuário decide quando baixar
 autoUpdater.autoInstallOnAppQuit = true  // Instala automaticamente ao fechar
 autoUpdater.allowPrerelease = false
 
+// Repositório privado — injeta token para acessar releases (injetado via define no build)
+const releasesToken = (typeof __RELEASES_TOKEN__ !== 'undefined' ? __RELEASES_TOKEN__ : '')
+if (releasesToken) {
+  autoUpdater.requestHeaders = { 'Authorization': `token ${releasesToken}` }
+}
+
 let mainWindow
 
 function createWindow() {
