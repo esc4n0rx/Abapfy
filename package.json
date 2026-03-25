@@ -1,6 +1,6 @@
 {
   "name": "abapfy",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "description": "Abapfy — Um conjunto de ferramentas para a área SAP",
   "author": {
     "name": "Paulo Oliveira",
@@ -43,7 +43,8 @@
       "provider": "github",
       "owner": "esc4n0rx",
       "repo": "Abapfy",
-      "releaseType": "release"
+      "releaseType": "release",
+      "private": true
     },
     "directories": {
       "output": "dist"

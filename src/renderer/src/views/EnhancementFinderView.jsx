@@ -3,6 +3,7 @@ import { useAiStore } from '../store/aiStore'
 import { getActiveProvider, parseJSONResponse } from '../lib/aiClient'
 import enhancementPromptRaw from '../agents/enhancement_finder.md?raw'
 import AbapHighlight from '../components/AbapHighlight'
+import { searchBadis, formatBadisForPrompt } from '../lib/badiSearch'
 
 const SAP_MODULES = [
   { key: 'MM', label: 'MM — Materials Management' },
@@ -46,13 +47,13 @@ function EnhancementCard({ rec }) {
   return (
     <div style={{ border: '1px solid var(--sap-border)', borderRadius: 10, overflow: 'hidden', marginBottom: 14, background: 'var(--sap-base)' }}>
       {/* Header */}
-      <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--sap-border)', background: rec.rank === 1 ? '#f0f6ff' : 'var(--sap-base)' }}>
+      <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--sap-border)', background: rec.rank === 1 ? 'rgba(0, 112, 242, 0.08)' : 'var(--sap-base)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
           <RankBadge rank={rec.rank} />
           <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', background: typeColor, padding: '2px 8px', borderRadius: 4 }}>{rec.type}</span>
           <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 14, color: 'var(--sap-text)' }}>{rec.name}</span>
           {rec.s4hana_compatible && (
-            <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 600, color: '#107e3e', background: '#e8f5e9', border: '1px solid #b7e4c7', padding: '2px 8px', borderRadius: 4 }}>
+            <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 600, color: '#107e3e', background: 'rgba(16, 126, 62, 0.15)', border: '1px solid rgba(16, 126, 62, 0.4)', padding: '2px 8px', borderRadius: 4 }}>
               ✓ S/4HANA
             </span>
           )}
@@ -74,13 +75,13 @@ function EnhancementCard({ rec }) {
         )}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
           {rec.pros && (
-            <div style={{ padding: '8px 12px', background: '#f0faf4', border: '1px solid #b7e4c7', borderRadius: 6 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#107e3e', marginBottom: 4 }}>✓ VANTAGENS</div>
+            <div style={{ padding: '8px 12px', background: 'rgba(16, 126, 62, 0.1)', border: '1px solid rgba(16, 126, 62, 0.35)', borderRadius: 6 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#2d9e5f', marginBottom: 4 }}>✓ VANTAGENS</div>
               <div style={{ fontSize: 12, color: 'var(--sap-text)', lineHeight: 1.6 }}>{rec.pros}</div>
             </div>
           )}
           {rec.cons && (
-            <div style={{ padding: '8px 12px', background: '#fff8f0', border: '1px solid #ffe0b2', borderRadius: 6 }}>
+            <div style={{ padding: '8px 12px', background: 'rgba(233, 115, 12, 0.1)', border: '1px solid rgba(233, 115, 12, 0.35)', borderRadius: 6 }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: '#e9730c', marginBottom: 4 }}>⚠ LIMITAÇÕES</div>
               <div style={{ fontSize: 12, color: 'var(--sap-text)', lineHeight: 1.6 }}>{rec.cons}</div>
             </div>
@@ -120,6 +121,7 @@ export default function EnhancementFinderView() {
   const [description, setDescription] = useState('')
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [loadingStep, setLoadingStep] = useState('')
   const [error, setError] = useState('')
 
   async function handleSearch() {
@@ -129,9 +131,16 @@ export default function EnhancementFinderView() {
 
     setLoading(true); setError(''); setResult(null)
     try {
+      // RAG: busca BAdIs relevantes na base local antes de chamar a IA
+      setLoadingStep('Buscando BAdIs na base S/4HANA...')
+      const badiResults = searchBadis(description, module, 30)
+      const badiContext = formatBadisForPrompt(badiResults)
+
+      setLoadingStep('Analisando com IA...')
       const userMessage =
         `Módulo SAP: ${module}\n\n` +
         `Necessidade de customização:\n${description.trim()}\n\n` +
+        (badiContext ? `${badiContext}\n\n` : '') +
         `Identifique os melhores pontos de enhancement SAP para atender esse requisito.`
 
       let raw = ''
@@ -146,7 +155,7 @@ export default function EnhancementFinderView() {
       }
       setResult(parseJSONResponse(raw))
     } catch (e) { setError(`Erro: ${e.message}`) }
-    finally { setLoading(false) }
+    finally { setLoading(false); setLoadingStep('') }
   }
 
   const textareaStyle = {
@@ -194,7 +203,7 @@ export default function EnhancementFinderView() {
         </div>
 
         {error && (
-          <div style={{ padding: '8px 12px', background: '#fff0f0', border: '1px solid #ffcccc', borderRadius: 6, color: '#bb0000', fontSize: 13 }}>
+          <div style={{ padding: '8px 12px', background: 'rgba(187, 0, 0, 0.1)', border: '1px solid rgba(187, 0, 0, 0.35)', borderRadius: 6, color: 'var(--sap-text)', fontSize: 13 }}>
             {error}
           </div>
         )}
@@ -232,7 +241,7 @@ export default function EnhancementFinderView() {
         {loading && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 300, gap: 16, color: 'var(--sap-subtle)' }}>
             <span style={{ fontSize: 32, animation: 'spin 1s linear infinite', display: 'inline-block' }}>⟳</span>
-            <div style={{ fontSize: 14 }}>Analisando base de conhecimento SAP...</div>
+            <div style={{ fontSize: 14 }}>{loadingStep || 'Analisando base de conhecimento SAP...'}</div>
           </div>
         )}
 
@@ -254,7 +263,7 @@ export default function EnhancementFinderView() {
             ))}
 
             {result.additional_notes && (
-              <div style={{ padding: '12px 16px', background: '#fff8f0', border: '1px solid #ffe0b2', borderRadius: 8, fontSize: 13, color: 'var(--sap-text)', lineHeight: 1.7 }}>
+              <div style={{ padding: '12px 16px', background: 'rgba(233, 115, 12, 0.1)', border: '1px solid rgba(233, 115, 12, 0.35)', borderRadius: 8, fontSize: 13, color: 'var(--sap-text)', lineHeight: 1.7 }}>
                 <div style={{ fontWeight: 600, marginBottom: 6, color: '#e9730c', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.4px' }}>⚠ Observações Adicionais</div>
                 {result.additional_notes}
               </div>

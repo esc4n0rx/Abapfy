@@ -70,7 +70,7 @@ function runCodexIntegration(fullPrompt) {
       '-'
     ]
 
-    const proc = spawn('npx', args, {
+    const proc = spawn('codex', args.slice(1), {
       shell: true,
       env: { ...process.env },
       stdio: ['pipe', 'pipe', 'pipe']
@@ -603,8 +603,8 @@ app.whenReady().then(() => {
   ipcMain.handle('ai-check-cli', async (_, { tool }) => {
     return new Promise((resolve) => {
       const isAgent = tool === 'agent'
-      const cmd  = isAgent ? 'claude' : 'npx'
-      const args = isAgent ? ['--version'] : ['codex', '--version']
+      const cmd  = isAgent ? 'claude' : 'codex'
+      const args = ['--version']
 
       const proc = spawn(cmd, args, { shell: true, stdio: 'ignore' })
       proc.on('close', (code) => resolve({ installed: code === 0 }))
