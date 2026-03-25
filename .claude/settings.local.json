@@ -68,7 +68,29 @@
       "Bash(npx --yes electron-icon-builder --input=./logo.png --output=./resources --flatten)",
       "Bash(set CSC_IDENTITY_AUTO_DISCOVERY=false)",
       "Bash(CSC_IDENTITY_AUTO_DISCOVERY=false npm run package)",
-      "Bash(node -e \"require\\(''''electron-updater''''\\); console.log\\(''''ok''''\\)\")"
+      "Bash(node -e \"require\\(''''electron-updater''''\\); console.log\\(''''ok''''\\)\")",
+      "Bash(node scripts/generate-icons.js)",
+      "Bash(cp logo.png src/renderer/src/assets/logo.png)",
+      "Bash(cp logo.png resources/icon.png)",
+      "Bash(ls \"/c/Users/paulo.oliveira/Desktop/Nova pasta \\(4\\)/out/\")",
+      "Bash(ls \"/c/Users/paulo.oliveira/Desktop/Nova pasta \\(4\\)/dist/win-unpacked/resources/\")",
+      "Bash(cat \"/c/Users/paulo.oliveira/Desktop/Nova pasta \\(4\\)/out/renderer/index.html\")",
+      "Bash(ls \"/c/Users/paulo.oliveira/Desktop/Nova pasta \\(4\\)/dist/win-unpacked/resources/app.asar.unpacked/\")",
+      "Bash(head -5 \"/c/Users/paulo.oliveira/Desktop/Nova pasta \\(4\\)/out/renderer/assets/index-huFu61sb.css\")",
+      "Bash(head -3 '/c/Users/paulo.oliveira/Desktop/Nova pasta \\(4\\)/out/renderer/assets/index-Dhz39JOl.js')",
+      "Bash(find \"c:\\\\Users\\\\paulo.oliveira\\\\Desktop\\\\Nova pasta \\(4\\)\\\\src\\\\renderer\\\\src\\\\agents\" -type f)",
+      "Bash(sed -i 's/\"\"version\"\": \"\"1.0.8\"\"/\"\"version\"\": \"\"1.0.9\"\"/' package.json)",
+      "Bash(grep '\"\"version\"\"' package.json)",
+      "Bash(gh repo:*)",
+      "Bash(wc -l \"c:/Users/paulo.oliveira/Desktop/Nova pasta \\(4\\)/src/renderer/src/docs/base_badi.csv\")",
+      "Bash(head -5 \"c:/Users/paulo.oliveira/Desktop/Nova pasta \\(4\\)/src/renderer/src/docs/base_badi.csv\")",
+      "Bash(head -10 \"c:/Users/paulo.oliveira/Desktop/Nova pasta \\(4\\)/src/renderer/src/docs/base_badi.csv\")",
+      "Bash(head -15 echo \"---\" grep -i \"goods.move\\\\|migo\\\\|MB_\\\\|GOODSMVT\\\\|movimento\" \"c:/Users/paulo.oliveira/Desktop/Nova pasta \\(4\\)/src/renderer/src/docs/base_badi.csv\")",
+      "Bash(head -15 echo \"---\" grep -i \"^WM_EX\\\\|^WM_\" \"c:/Users/paulo.oliveira/Desktop/Nova pasta \\(4\\)/src/renderer/src/docs/base_badi.csv\")",
+      "Bash(head -10 echo \"---\" grep -i \"VENDOR\\\\|FORNECEDOR\\\\|LFA1\\\\|XK01\\\\|MK01\\\\|BP_CUST\\\\|BUPA\" \"c:/Users/paulo.oliveira/Desktop/Nova pasta \\(4\\)/src/renderer/src/docs/base_badi.csv\")",
+      "Bash(head -10 echo \"---\" grep -i \"invoice\\\\|nota.fiscal\\\\|miro\\\\|LIV\\\\|logistic.invoice\\\\|fatura\" \"c:/Users/paulo.oliveira/Desktop/Nova pasta \\(4\\)/src/renderer/src/docs/base_badi.csv\")",
+      "Bash(head -20 echo \"---\" grep -i \"^BADI_SD\\\\|^SD_SLS\\\\|^V_SALES\\\\|SALES_ORDER\\\\|VBAK\\\\|VA01\" \"c:/Users/paulo.oliveira/Desktop/Nova pasta \\(4\\)/src/renderer/src/docs/base_badi.csv\")",
+      "Bash(find /c/Users/paulo.oliveira/Desktop/\"Nova pasta \\(4\\)\"/src/renderer/src -type f -name \"*.css\" -o -name \"*.scss\" -o -name \"*.jsx\" -o -name \"*.js\")"
     ]
   }
 }
