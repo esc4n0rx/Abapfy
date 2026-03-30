@@ -24,6 +24,9 @@ const api = {
     ipcRenderer.removeAllListeners('ai-stream-error')
   },
 
+  // ─── ABAP Validate via SAP GUI Scripting ───────────────────────────────────
+  validateAbap: (payload) => ipcRenderer.invoke('abap-validate', payload),
+
   // ─── Code Review file helpers ──────────────────────────────────────────────
   saveReviewFiles: (payload) => ipcRenderer.invoke('code-review-save-files', payload),
   getReviewDir: (payload) => ipcRenderer.invoke('code-review-get-dir', payload),
@@ -31,6 +34,8 @@ const api = {
   // ─── Especificações Funcionais ──────────────────────────────────────────────
   generateEfDoc: (payload) => ipcRenderer.invoke('ef-generate-doc', payload),
   openEfFile: (payload) => ipcRenderer.invoke('ef-open-file', payload),
+  readEfDocx: () => ipcRenderer.invoke('ef-read-docx'),
+  pickAbapFiles: () => ipcRenderer.invoke('ef-pick-abap-files'),
 
   // ─── Notificações nativas ───────────────────────────────────────────────────
   notify: (payload) => ipcRenderer.invoke('show-notification', payload),

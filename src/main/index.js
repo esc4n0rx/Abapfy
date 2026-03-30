@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, Notification } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, Notification, dialog } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { spawn } from 'child_process'
@@ -210,6 +210,137 @@ function replaceDocxText(buffer, replacements) {
   return zip.generate({ type: 'nodebuffer' })
 }
 
+// ─── Helper: Extrai parágrafos de texto + rIds de imagem de um XML DOCX ───────
+// Retorna array de { text: string, rIds: string[] }
+function extractDocxParagraphs(xml) {
+  const paragraphs = []
+  const parts = xml.split('</w:p>')
+  for (const part of parts) {
+    const idx = part.lastIndexOf('<w:p')
+    if (idx === -1) continue
+    const paraPart = part.slice(idx)
+
+    // Extrai texto
+    const textRe = /<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g
+    let m
+    let text = ''
+    while ((m = textRe.exec(paraPart)) !== null) text += m[1]
+
+    // Extrai rIds de imagens embarcadas neste parágrafo
+    const rIdRe = /r:embed="([^"]+)"/g
+    const rIds = []
+    let rm
+    while ((rm = rIdRe.exec(paraPart)) !== null) rIds.push(rm[1])
+
+    paragraphs.push({ text: text.trim(), rIds })
+  }
+  return paragraphs
+}
+
+// ─── Helper: Lê o mapa rId → nome do arquivo de word/_rels/document.xml.rels ──
+function buildDocxRelMap(zip) {
+  const relMap = {}
+  const relsFile = zip.file('word/_rels/document.xml.rels')
+  if (!relsFile) return relMap
+  const relsXml = relsFile.asText()
+  // Itera em cada tag <Relationship .../>
+  const tagRe = /<Relationship\s([^>]+)>/gi
+  let tm
+  while ((tm = tagRe.exec(relsXml)) !== null) {
+    const attrs = tm[1]
+    const idM    = attrs.match(/Id="([^"]+)"/)
+    const typeM  = attrs.match(/Type="([^"]+)"/)
+    const targetM = attrs.match(/Target="([^"]+)"/)
+    if (idM && typeM && targetM && typeM[1].endsWith('/image')) {
+      // Target pode ser "media/image1.png" ou "../media/image1.png"
+      relMap[idM[1]] = targetM[1].split('/').pop()
+    }
+  }
+  return relMap
+}
+
+// ─── Helper: Analisa seções da EF a partir dos parágrafos ─────────────────────
+// paragraphs: array de { text: string, rIds: string[] }
+// Retorna dados estruturados + efImageRIds (rIds das imagens de 3.1 e 3.2)
+function parseEfSections(paragraphs) {
+  const result = {
+    projectName: '',
+    empresa: '',
+    titulo: '',
+    descricaoResumida: '',
+    visaoGeral: '',
+    especificacaoFuncional: '',
+    efImageRIds: []   // rIds de imagens encontradas em 3.1 e 3.2
+  }
+
+  const sections = {}      // secNum → string[]
+  const sectionRIds = {}   // secNum → string[]
+  let currentSection = null
+
+  for (let i = 0; i < paragraphs.length; i++) {
+    const { text: p, rIds } = paragraphs[i]
+    const pUpper = p.toUpperCase().replace(/[^A-ZÁÉÍÓÚÃÕÇÀÂÊÎÔÛ\s]/g, '').trim()
+
+    // Título principal da EF → próximo parágrafo não-numérico é o nome do projeto
+    if (!result.projectName && (pUpper === 'ESPECIFICACAO FUNCIONAL' || pUpper === 'ESPECIFICAÇÃO FUNCIONAL')) {
+      if (i + 1 < paragraphs.length && !paragraphs[i + 1].text.match(/^\d/)) {
+        result.projectName = paragraphs[i + 1].text
+      }
+      continue
+    }
+
+    // Detecta marcadores de subseção tipo "1.1", "3.1", "3.2"
+    const secMatch = p.match(/^(\d+\.\d+)[\s\t\.]/)
+    if (secMatch) {
+      currentSection = secMatch[1]
+      if (!sections[currentSection]) { sections[currentSection] = []; sectionRIds[currentSection] = [] }
+      continue
+    }
+
+    // Marcadores de seção de nível superior encerram a subseção atual
+    if (p.match(/^\d+[\s\t\.]/) && currentSection) {
+      currentSection = null
+    }
+
+    if (currentSection) {
+      if (!sections[currentSection]) { sections[currentSection] = []; sectionRIds[currentSection] = [] }
+      if (p) sections[currentSection].push(p)
+      if (rIds.length) sectionRIds[currentSection].push(...rIds)
+    }
+  }
+
+  // Seção 1.1 — Pedido Funcional
+  if (sections['1.1']) {
+    const block = sections['1.1'].join('\n')
+    const empresaM = block.match(/empresa[:\s]+([^\n]+)/i)
+    const tituloM  = block.match(/t[íi]tulo[:\s]+([^\n]+)/i)
+    const descM    = block.match(/descri[çc][ãa]o[^:\n]*:[^\n]*(.*)/i)
+    result.empresa = empresaM ? empresaM[1].trim() : ''
+    result.titulo  = tituloM  ? tituloM[1].trim()  : ''
+    result.descricaoResumida = descM ? descM[1].trim() : sections['1.1'].slice(0, 4).join(' ').slice(0, 300)
+    if (!result.empresa) {
+      for (let i = 0; i < sections['1.1'].length - 1; i++) {
+        const lbl = sections['1.1'][i].toLowerCase()
+        const val = sections['1.1'][i + 1]
+        if (lbl.includes('empresa'))                              result.empresa = val
+        else if (lbl.includes('título') || lbl.includes('titulo')) result.titulo = val
+        else if (lbl.includes('descrição') || lbl.includes('descricao')) result.descricaoResumida = val
+      }
+    }
+  }
+
+  if (sections['3.1']) result.visaoGeral = sections['3.1'].join('\n')
+  if (sections['3.2']) result.especificacaoFuncional = sections['3.2'].join('\n')
+
+  // Coleta rIds únicos das seções visuais (3.1 + 3.2)
+  const seen = new Set()
+  for (const rId of [...(sectionRIds['3.1'] || []), ...(sectionRIds['3.2'] || [])]) {
+    if (!seen.has(rId)) { seen.add(rId); result.efImageRIds.push(rId) }
+  }
+
+  return result
+}
+
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.abapfy.app')
 
@@ -340,9 +471,18 @@ app.whenReady().then(() => {
   })
 
   // ─── Integration: Claude Code (agent SDK) or Codex CLI ─────────────────────
-  ipcMain.handle('ai-generate-integration', async (_, { integrationType, systemPrompt, userMessage, programName }) => {
+  ipcMain.handle('ai-generate-integration', async (_, { integrationType, systemPrompt, userMessage, programName, images: _images }) => {
     const safeName = (programName || 'ABAP_PROGRAM').replace(/[^a-zA-Z0-9_-]/g, '_')
     const outputDir = nodePath.join(app.getPath('documents'), 'Abapfy', safeName)
+
+    console.log(`[AI-INTEGRATION] ► START | type=${integrationType} | program=${safeName}`)
+    console.log(`[AI-INTEGRATION] outputDir=${outputDir}`)
+    console.log(`[AI-INTEGRATION] userMessage (primeiros 200 chars): ${userMessage?.slice(0, 200)}`)
+
+    // ── IMAGENS DESABILITADAS TEMPORARIAMENTE ─────────────────────────────────
+    // TODO: reativar quando confirmar suporte do SDK a content arrays multimodais
+    // const tempImagePaths = []
+    // if (images?.length) { ... salvar em temp e referenciar no prompt ... }
 
     console.log(`[AI-INTEGRATION] ► START | type=${integrationType} | program=${safeName}`)
     console.log(`[AI-INTEGRATION] outputDir=${outputDir}`)
@@ -381,6 +521,13 @@ app.whenReady().then(() => {
             console.log('[AI-INTEGRATION] ✔ ResultMessage recebido')
             rawContent = message.result || ''
           }
+          // Captura content/text para variações do SDK
+          if (!rawContent && message?.content) {
+            const content = Array.isArray(message.content)
+              ? message.content.filter(b => b.type === 'text').map(b => b.text).join('')
+              : String(message.content)
+            if (content.trim()) rawContent = content
+          }
         }
         console.log(`[AI-INTEGRATION] Claude finalizado. rawContent length=${rawContent.length}`)
 
@@ -413,6 +560,54 @@ app.whenReady().then(() => {
     } catch (err) {
       console.error('[AI-INTEGRATION] ► ERRO:', err.message)
       console.error(err.stack)
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ─── ABAP Validate: monta programa completo e valida sintaxe via SE38 ───────
+  ipcMain.handle('abap-validate', async (_, { files, programName }) => {
+    const scriptPath = is.dev
+      ? nodePath.join(app.getAppPath(), 'src/renderer/src/scripts/sap_tester.py')
+      : nodePath.join(process.resourcesPath, 'sap_tester.py')
+
+    if (!fs.existsSync(scriptPath)) {
+      return { success: false, error: `Script não encontrado: ${scriptPath}` }
+    }
+
+    const tmpFile = nodePath.join(os.tmpdir(), `abap_validate_${Date.now()}.json`)
+    try {
+      fs.writeFileSync(tmpFile, JSON.stringify({ files, programName }), 'utf-8')
+
+      return await new Promise((resolve) => {
+        // Usa shell: true com caminhos entre aspas para suportar espaços no path (Windows)
+        const cmd = `python "${scriptPath}" --json "${tmpFile}"`
+        const proc = spawn(cmd, [], {
+          shell: true,
+          env: { ...process.env }
+        })
+
+        let stdout = ''
+        let stderr = ''
+        proc.stdout.on('data', (d) => { stdout += d.toString() })
+        proc.stderr.on('data', (d) => { stderr += d.toString() })
+
+        proc.on('close', () => {
+          try { fs.unlinkSync(tmpFile) } catch (_) {}
+          try {
+            const result = JSON.parse(stdout.trim())
+            resolve({ success: true, result })
+          } catch (e) {
+            resolve({ success: false, error: stderr.trim() || stdout.trim() || 'Sem saída do script' })
+          }
+        })
+
+        proc.on('error', (err) => {
+          try { fs.unlinkSync(tmpFile) } catch (_) {}
+          resolve({ success: false, error: `Falha ao iniciar Python: ${err.message}` })
+        })
+      })
+    } catch (err) {
+      try { fs.unlinkSync(tmpFile) } catch (_) {}
       return { success: false, error: err.message }
     }
   })
@@ -667,6 +862,87 @@ app.whenReady().then(() => {
       if (result) throw new Error(result)
       return { success: true }
     } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ─── EF: Abre diálogo, lê e parseia arquivo .docx de Especificação Funcional ─
+  ipcMain.handle('ef-read-docx', async () => {
+    try {
+      const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+        title: 'Selecionar Especificação Funcional (.docx)',
+        filters: [{ name: 'Word Document', extensions: ['docx'] }],
+        properties: ['openFile']
+      })
+      if (canceled || !filePaths.length) return { success: false, canceled: true }
+
+      const buffer = fs.readFileSync(filePaths[0])
+      const zip = new PizZip(buffer)
+      const xmlFile = zip.file('word/document.xml')
+      if (!xmlFile) throw new Error('Arquivo DOCX inválido: word/document.xml não encontrado')
+
+      const xml = xmlFile.asText()
+      const paragraphs = extractDocxParagraphs(xml)
+      const parsed = parseEfSections(paragraphs)
+
+      // Mapeia rId → nome do arquivo via word/_rels/document.xml.rels
+      const relMap = buildDocxRelMap(zip)
+
+      // Extrai apenas imagens PNG/JPG referenciadas nas seções 3.1 e 3.2 (máx 10)
+      const images = []
+      const SUPPORTED_EXT = new Set(['.png', '.jpg', '.jpeg'])
+      const MAX_IMAGES = 10
+
+      for (const rId of parsed.efImageRIds) {
+        if (images.length >= MAX_IMAGES) break
+        const fileName = relMap[rId]
+        if (!fileName) continue
+        const ext = nodePath.extname(fileName).toLowerCase()
+        if (!SUPPORTED_EXT.has(ext)) continue
+        const mediaFile = zip.file(`word/media/${fileName}`)
+        if (!mediaFile) continue
+        try {
+          const base64 = mediaFile.asNodeBuffer().toString('base64')
+          const mimeType = ext === '.png' ? 'image/png' : 'image/jpeg'
+          images.push({ name: fileName, base64, mimeType })
+        } catch (_) { /* ignora arquivo corrompido */ }
+      }
+
+      console.log(`[EF-READ-DOCX] ${paragraphs.length} parágrafos, ${images.length} imagem(ns) das seções 3.1/3.2`)
+
+      return {
+        success: true,
+        fileName: nodePath.basename(filePaths[0]),
+        data: parsed,
+        rawText: paragraphs.map(p => p.text).filter(Boolean).join('\n'),
+        images
+      }
+    } catch (err) {
+      console.error('[EF-READ-DOCX] Erro:', err.message)
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ─── EF: Abre diálogo para selecionar programas ABAP existentes (.abap/.txt) ─
+  ipcMain.handle('ef-pick-abap-files', async () => {
+    try {
+      const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+        title: 'Selecionar Programas ABAP (contexto)',
+        filters: [
+          { name: 'ABAP / Text', extensions: ['abap', 'txt'] },
+          { name: 'All Files', extensions: ['*'] }
+        ],
+        properties: ['openFile', 'multiSelections']
+      })
+      if (canceled || !filePaths.length) return { success: false, canceled: true }
+
+      const files = filePaths.map(fp => ({
+        name: nodePath.basename(fp),
+        content: fs.readFileSync(fp, 'utf-8')
+      }))
+      return { success: true, files }
+    } catch (err) {
+      console.error('[EF-PICK-ABAP] Erro:', err.message)
       return { success: false, error: err.message }
     }
   })

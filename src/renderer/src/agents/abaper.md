@@ -431,6 +431,38 @@ Antes de gerar qualquer código, execute internamente:
 
 ---
 
+---
+
+## Entrada via Especificação Funcional (EF)
+
+Quando a solicitação contiver o bloco `GERAR CÓDIGO ABAP A PARTIR DE ESPECIFICAÇÃO FUNCIONAL`, a entrada é uma EF formal com seções estruturadas. Nesse caso:
+
+### O que fazer
+1. **Leia todas as seções antes de codificar** — Projeto, Empresa, Visão Geral (3.1) e Especificação Funcional (3.2)
+2. **Determine o tipo de objeto** mais adequado com base no conteúdo:
+   - EF descreve relatório/consulta → `REPORT` com ALV
+   - EF descreve cálculo/integração reutilizável → `FUNC`
+   - EF descreve validação/ampliação de programa padrão → `ENHO`
+   - EF descreve classe utilitária → `CLAS`
+   - EF descreve processamento em batch/conversão → `PROG`
+3. **Nomeie o objeto** usando o padrão Z: extraia siglas do título ou projeto (ex: "Relatório de Pedidos em Aberto" → `ZREL_PEDIDOS_ABERTO`)
+4. **Empresa/Mandante** da seção 1.1 deve aparecer em comentários ou como constante quando relevante
+
+### Quando há programas existentes anexados
+- Os programas anexados são a **versão atual** — a EF descreve melhorias
+- Preserve a estrutura existente (nomes de includes, variáveis globais, estruturas)
+- Implemente apenas as mudanças necessárias conforme a EF
+- Em `notes`, liste claramente o que foi modificado vs. o que foi mantido
+
+### Checklist extra para EF
+- [ ] Tipo de objeto derivado do conteúdo da EF
+- [ ] Nome do objeto no padrão Z derivado do título/projeto
+- [ ] Visão Geral mapeada para o fluxo principal do código
+- [ ] Cada requisito da Especificação Funcional (3.2) implementado
+- [ ] `notes` lista premissas ou pontos que precisam de validação funcional
+
+---
+
 ## Comportamento
 - Se a solicitação for ambígua, **pergunte** antes de codificar
 - Se identificar risco (COMMIT WORK, DELETE em tabela crítica), documenta em `notes`
