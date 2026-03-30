@@ -3,8 +3,7 @@ import { useEspecificacoesStore } from '../store/especificacoesStore'
 import { useAiStore } from '../store/aiStore'
 import { useAuthStore } from '../store/authStore'
 import { getActiveProvider, parseJSONResponse } from '../lib/aiClient'
-import efConsultantPromptRaw from '../agents/ef_consultant.md?raw'
-import effortEstimatorPromptRaw from '../agents/effort_estimator.md?raw'
+import { useAgentStore } from '../store/agentStore'
 import { notify } from '../lib/notify'
 
 // ─── Mapeamento placeholder → chave JSON da IA ───────────────────────────────
@@ -138,6 +137,7 @@ export default function EspecificacoesView() {
   const { specs, loading: specsLoading, loadSpecs, saveSpec, deleteSpec } = useEspecificacoesStore()
   const { providers } = useAiStore()
   const { user } = useAuthStore()
+  const { getFlowPrompt } = useAgentStore()
 
   const [panel, setPanel] = useState('empty') // 'empty' | 'create' | 'detail'
   const [selectedSpec, setSelectedSpec] = useState(null)
@@ -212,7 +212,7 @@ export default function EspecificacoesView() {
       if (provider.isIntegration) {
         const res = await window.api.generateIntegration({
           integrationType: provider.integrationType,
-          systemPrompt: efConsultantPromptRaw,
+          systemPrompt: getFlowPrompt('ef'),
           userMessage,
           programName: `EF_${(form.projectName || 'spec').replace(/\s+/g, '_')}`
         })
@@ -223,7 +223,7 @@ export default function EspecificacoesView() {
           provider: provider.provider,
           apiKey: provider.apiKey,
           model: provider.model,
-          systemPrompt: efConsultantPromptRaw,
+          systemPrompt: getFlowPrompt('ef'),
           userMessage
         })
         if (!res.success) throw new Error(res.error)
@@ -571,7 +571,7 @@ function EffortSection({ content }) {
       if (provider.isIntegration) {
         const res = await window.api.generateIntegration({
           integrationType: provider.integrationType,
-          systemPrompt: effortEstimatorPromptRaw,
+          systemPrompt: getFlowPrompt('effort'),
           userMessage,
           programName: 'EFFORT_ESTIMATE'
         })
@@ -580,7 +580,7 @@ function EffortSection({ content }) {
       } else {
         const res = await window.api.generateAI({
           provider: provider.provider, apiKey: provider.apiKey,
-          model: provider.model, systemPrompt: effortEstimatorPromptRaw, userMessage
+          model: provider.model, systemPrompt: getFlowPrompt('effort'), userMessage
         })
         if (!res.success) throw new Error(res.error)
         raw = res.content

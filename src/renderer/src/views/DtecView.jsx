@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useAiStore } from '../store/aiStore'
 import { useAuthStore } from '../store/authStore'
 import { getActiveProvider, parseJSONResponse } from '../lib/aiClient'
-import dtecPromptRaw from '../agents/dtec_consultant.md?raw'
+import { useAgentStore } from '../store/agentStore'
 import { notify } from '../lib/notify'
 
 const LS_KEY = 'abapfy_dtec_specs'
@@ -169,6 +169,7 @@ function DtecDetail({ dtec, onDelete }) {
 export default function DtecView() {
   const { providers } = useAiStore()
   const { user } = useAuthStore()
+  const { getFlowPrompt } = useAgentStore()
   const [dtecs, setDtecs] = useState(() => loadDtecs())
   const [selected, setSelected] = useState(null)
   const [panel, setPanel] = useState('empty') // empty | create | detail
@@ -239,7 +240,7 @@ export default function DtecView() {
 
         const res = await window.api.generateIntegration({
           integrationType: provider.integrationType,
-          systemPrompt: dtecPromptRaw,
+          systemPrompt: getFlowPrompt('dtec'),
           userMessage,
           programName: `DTec_${form.objectName || 'objeto'}`
         })
@@ -265,7 +266,7 @@ export default function DtecView() {
           provider: provider.provider,
           apiKey: provider.apiKey,
           model: provider.model,
-          systemPrompt: dtecPromptRaw,
+          systemPrompt: getFlowPrompt('dtec'),
           userMessage
         })
         if (!res.success) throw new Error(res.error)

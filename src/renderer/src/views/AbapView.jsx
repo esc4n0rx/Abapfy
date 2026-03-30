@@ -5,7 +5,7 @@ import { useAiStore } from '../store/aiStore'
 import { useAuthStore } from '../store/authStore'
 import { callAI, parseJSONResponse, getActiveProvider, buildAbapPrompt } from '../lib/aiClient'
 import { notify } from '../lib/notify'
-import abaperPrompt from '../agents/abaper.md?raw'
+import { useAgentStore } from '../store/agentStore'
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -446,13 +446,47 @@ function StepClassOO({ form, update }) {
   )
 }
 
-function StepGenerate({ form, providers, generating, genError, genResult, genSavedPath, onGenerate }) {
+function SapVersionBadge({ sapVersion }) {
+  const [showTip, setShowTip] = React.useState(false)
+  const v = sapVersion || 'ECC 6.0'
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--sap-text)' }}>{v}</span>
+      <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+        <span
+          onMouseEnter={() => setShowTip(true)}
+          onMouseLeave={() => setShowTip(false)}
+          style={{
+            width: 15, height: 15, borderRadius: '50%',
+            background: 'var(--sap-subtle)', color: '#fff',
+            fontSize: 9, fontWeight: 700, cursor: 'default',
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            userSelect: 'none', flexShrink: 0
+          }}
+        >i</span>
+        {showTip && (
+          <div style={{
+            position: 'absolute', right: 22, top: '50%', transform: 'translateY(-50%)',
+            zIndex: 200, width: 280, padding: '10px 12px',
+            background: '#2d3748', color: '#e2e8f0', borderRadius: 6,
+            fontSize: 12, lineHeight: 1.6, pointerEvents: 'none',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.35)', whiteSpace: 'pre-wrap'
+          }}>
+            {'Para verificar a versão do seu SAP:\n• Transação SM51 → campo "Release"\n• Menu Sistema → Status\n• Transação SE80 → Sobre\n\nAltere em: Configurações → IA'}
+          </div>
+        )}
+      </span>
+    </div>
+  )
+}
+
+function StepGenerate({ form, providers, generating, genError, genResult, genSavedPath, sapVersion, onGenerate }) {
   const active = getActiveProvider(providers)
 
   if (genResult) {
     return (
       <>
-        <ResultContent result={genResult} />
+        <ResultContent result={genResult} programName={form.name} providers={providers} />
         {genSavedPath && (
           <div style={{
             marginTop: 12, padding: '9px 14px', borderRadius: 4, fontSize: 12,
@@ -499,17 +533,16 @@ function StepGenerate({ form, providers, generating, genError, genResult, genSav
         </div>
       )}
 
-      {/* EF (disabled) */}
+      {/* SAP version */}
       <div style={{
-        padding: '12px 16px', background: 'var(--sap-bg)',
-        border: '1px dashed var(--sap-border)', borderRadius: 4, opacity: 0.55
+        padding: '10px 16px', background: 'var(--sap-bg)',
+        border: '1px solid var(--sap-border)', borderRadius: 4,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between'
       }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--sap-text)' }}>
-          Carregar Especificação Funcional
+        <div style={{ fontSize: 11, color: 'var(--sap-subtle)', textTransform: 'uppercase', letterSpacing: 0.3 }}>
+          Versão SAP do ambiente
         </div>
-        <div style={{ fontSize: 12, color: 'var(--sap-subtle)', marginTop: 2 }}>
-          Em desenvolvimento — disponível em breve
-        </div>
+        <SapVersionBadge sapVersion={sapVersion} />
       </div>
 
       {genError && (
@@ -599,10 +632,21 @@ function FileCard({ file }) {
   )
 }
 
-function ResultContent({ result }) {
+const MAX_FIX_ATTEMPTS = 5
+
+function ResultContent({ result, programName, providers }) {
+  const { getFlowPrompt } = useAgentStore()
   const [copiedAll, setCopiedAll] = useState(false)
+  // currentResult pode ser atualizado pelo loop de auto-correção
+  const [currentResult, setCurrentResult] = useState(result)
+  const [autoFix, setAutoFix] = useState(false)
+  const [validating, setValidating] = useState(false)
+  const [statusMsg, setStatusMsg] = useState('')
+  const [fixLog, setFixLog] = useState([])       // [{attempt, erros, fixed}]
+  const [validateResult, setValidateResult] = useState(null)
+
   const copyAll = () => {
-    const all = (result.files || []).map(f =>
+    const all = (currentResult.files || []).map(f =>
       `* === ${f.type}: ${f.name} ===\n${f.content}`
     ).join('\n\n')
     navigator.clipboard.writeText(all)
@@ -610,19 +654,109 @@ function ResultContent({ result }) {
     setTimeout(() => setCopiedAll(false), 1800)
   }
 
+  const handleValidate = async () => {
+    if (!window.api?.validateAbap) return
+    setValidating(true)
+    setValidateResult(null)
+    setFixLog([])
+
+    const active = autoFix ? getActiveProvider(providers) : null
+    let files = currentResult.files || []
+    let lastRes = null
+
+    for (let attempt = 1; attempt <= MAX_FIX_ATTEMPTS; attempt++) {
+      // ── 1. Valida no SAP ──────────────────────────────────────────────────
+      setStatusMsg(attempt === 1 ? 'Validando no SAP...' : `Revalidando no SAP (tentativa ${attempt}/${MAX_FIX_ATTEMPTS})...`)
+      let res
+      try {
+        res = await window.api.validateAbap({ files, programName: programName || 'ZVALIDATE_TMP' })
+      } catch (err) {
+        lastRes = { success: false, error: err.message }
+        break
+      }
+      lastRes = res
+
+      const erros = res.result?.erros || []
+
+      // ── 2. Se ok ou sem auto-correção, encerra ────────────────────────────
+      if (res.result?.sucesso || !autoFix || !active || erros.length === 0) break
+
+      // ── 3. Auto-correção: envia erros + código ao modelo ──────────────────
+      setFixLog(prev => [...prev, { attempt, erros, fixed: false }])
+      setStatusMsg(`Corrigindo com IA (tentativa ${attempt}/${MAX_FIX_ATTEMPTS})...`)
+
+      const errorText = erros.map(e => `  [${e.tipo}] Linha ${e.linha}: ${e.texto}`).join('\n')
+      const codigoAtual = files.map(f => `=== ${f.type}: ${f.name} ===\n${f.content}`).join('\n\n')
+      const fixPrompt =
+        `Corrija os erros de sintaxe ABAP abaixo identificados pelo SAP SE38.\n` +
+        `Retorne APENAS o JSON com os arquivos corrigidos (mesmo formato da geração original).\n\n` +
+        `ERROS (tentativa ${attempt}/${MAX_FIX_ATTEMPTS}):\n${errorText}\n\n` +
+        `CÓDIGO ATUAL:\n${codigoAtual}`
+
+      try {
+        let rawText
+        if (active.isIntegration) {
+          const r = await window.api.generateIntegration({
+            integrationType: active.integrationType,
+            systemPrompt: getFlowPrompt('abap'),
+            userMessage: fixPrompt,
+            programName: programName || 'ZFIX'
+          })
+          if (!r.success) break
+          rawText = r.content
+        } else {
+          rawText = await callAI(active, getFlowPrompt('abap'), fixPrompt)
+        }
+        const parsed = parseJSONResponse(rawText)
+        if (parsed?.files?.length) {
+          files = parsed.files
+          setCurrentResult(parsed)
+          setFixLog(prev => prev.map((l, i) => i === prev.length - 1 ? { ...l, fixed: true } : l))
+        }
+      } catch {
+        break
+      }
+    }
+
+    setValidateResult(lastRes)
+    setStatusMsg('')
+    setValidating(false)
+  }
+
+  const canValidate = !!window.api?.validateAbap && (currentResult.files?.length || 0) > 0
+  const hasProviders = providers && getActiveProvider(providers) != null
+
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <div style={{
-          fontSize: 13, fontWeight: 600, color: '#107e3e',
-          display: 'flex', alignItems: 'center', gap: 6
-        }}>
+      {/* ── Cabeçalho: contagem + botões ───────────────────────────────────── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: canValidate ? 8 : 16, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: '#107e3e', display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{
             width: 18, height: 18, borderRadius: '50%', background: '#107e3e',
             color: '#fff', fontSize: 11, display: 'inline-flex', alignItems: 'center', justifyContent: 'center'
           }}>✓</span>
-          {result.files?.length || 0} arquivo(s) gerado(s)
+          {currentResult.files?.length || 0} arquivo(s) gerado(s)
         </div>
+
+        {canValidate && (
+          <button onClick={handleValidate} disabled={validating} style={{
+            fontSize: 12, color: validating ? 'var(--sap-subtle)' : '#e8a000',
+            background: 'transparent',
+            border: '1px solid ' + (validating ? 'var(--sap-border)' : '#e8a000'),
+            borderRadius: 4, padding: '4px 14px', cursor: validating ? 'not-allowed' : 'pointer',
+            fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 6
+          }}>
+            {validating && (
+              <span style={{
+                width: 10, height: 10, border: '1.5px solid rgba(232,160,0,0.3)',
+                borderTop: '1.5px solid #e8a000', borderRadius: '50%',
+                animation: 'spin 0.8s linear infinite', display: 'inline-block'
+              }} />
+            )}
+            {validating ? statusMsg : 'Validar no SAP'}
+          </button>
+        )}
+
         <button onClick={copyAll} style={{
           marginLeft: 'auto', fontSize: 12,
           color: copiedAll ? '#107e3e' : 'var(--sap-primary)',
@@ -634,41 +768,474 @@ function ResultContent({ result }) {
         </button>
       </div>
 
-      {result.analysis && (
+      {/* ── Aviso SAP + toggle auto-correção ───────────────────────────────── */}
+      {canValidate && !validating && !validateResult && (
+        <div style={{
+          marginBottom: 14, padding: '9px 12px', borderRadius: 4,
+          background: '#fffbf0', border: '1px solid #ffe0b2',
+          display: 'flex', alignItems: 'flex-start', gap: 10
+        }}>
+          <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>⚠️</span>
+          <div style={{ fontSize: 12, color: '#7c4400', flex: 1 }}>
+            <strong>Pré-requisito:</strong> certifique-se de estar logado em um ambiente SAP de <strong>desenvolvimento</strong> antes de validar.
+            {hasProviders && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, cursor: 'pointer', userSelect: 'none' }}>
+                <input
+                  type="checkbox"
+                  checked={autoFix}
+                  onChange={e => setAutoFix(e.target.checked)}
+                  style={{ cursor: 'pointer' }}
+                />
+                <span>Corrigir automaticamente com IA em caso de erros (até {MAX_FIX_ATTEMPTS} tentativas)</span>
+              </label>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Log de iterações de auto-correção ──────────────────────────────── */}
+      {fixLog.length > 0 && (
+        <div style={{ marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {fixLog.map((entry, i) => (
+            <div key={i} style={{
+              fontSize: 12, padding: '5px 10px', borderRadius: 4,
+              background: entry.fixed ? '#f3faf5' : '#fff8f6',
+              border: '1px solid ' + (entry.fixed ? '#c3e6cb' : '#f5c6bc'),
+              color: entry.fixed ? '#107e3e' : '#bb0000'
+            }}>
+              {entry.fixed ? '✓' : '↻'} Tentativa {entry.attempt}: {entry.erros.length} erro(s) encontrado(s)
+              {entry.fixed ? ' — código corrigido pela IA' : ''}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Painel de resultado da validação ───────────────────────────────── */}
+      {validateResult && (
+        <div style={{
+          marginBottom: 14, padding: '12px 14px', borderRadius: 4,
+          background: validateResult.success && validateResult.result?.sucesso ? '#f3faf5' : '#fff8f6',
+          border: '1px solid ' + (validateResult.success && validateResult.result?.sucesso ? '#c3e6cb' : '#f5c6bc')
+        }}>
+          {validateResult.success && validateResult.result ? (
+            <>
+              <div style={{
+                fontSize: 13, fontWeight: 600, marginBottom: validateResult.result.erros?.length ? 8 : 0,
+                color: validateResult.result.sucesso ? '#107e3e' : '#bb0000',
+                display: 'flex', alignItems: 'center', gap: 6
+              }}>
+                <span>{validateResult.result.sucesso ? '✓' : '✗'}</span>
+                {validateResult.result.mensagem}
+                {!validateResult.result.sucesso && autoFix && fixLog.length >= MAX_FIX_ATTEMPTS && (
+                  <span style={{ fontSize: 11, fontWeight: 400, color: '#bb0000' }}>
+                    — limite de {MAX_FIX_ATTEMPTS} correções atingido
+                  </span>
+                )}
+              </div>
+
+              {validateResult.result.erros?.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+                  {validateResult.result.erros.map((e, i) => (
+                    <div key={i} style={{
+                      fontSize: 12, fontFamily: 'monospace', padding: '4px 8px',
+                      background: 'rgba(187,0,0,0.06)', borderRadius: 3, color: '#bb0000'
+                    }}>
+                      <strong>[{e.tipo}]</strong> Linha {e.linha}: {e.texto}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {validateResult.result.etapas && !validateResult.result.sucesso && (
+                <div style={{ fontSize: 11, color: 'var(--sap-subtle)', marginTop: 6 }}>
+                  {Object.entries(validateResult.result.etapas)
+                    .filter(([, v]) => !v.sucesso)
+                    .map(([k, v]) => <div key={k}>✗ {k}: {v.mensagem}</div>)}
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ fontSize: 13, color: '#bb0000' }}>
+              <strong>Erro:</strong> {validateResult.error}
+            </div>
+          )}
+        </div>
+      )}
+
+      {currentResult.analysis && (
         <div style={{
           padding: '10px 14px', background: 'var(--sap-bg)',
           border: '1px solid var(--sap-border)', borderRadius: 4,
           fontSize: 13, color: 'var(--sap-text)', marginBottom: 14
         }}>
-          <strong>Análise:</strong> {result.analysis}
+          <strong>Análise:</strong> {currentResult.analysis}
         </div>
       )}
 
-      {(result.files || []).map(file => (
+      {(currentResult.files || []).map(file => (
         <FileCard key={file.name} file={file} />
       ))}
 
-      {result.notes && (
+      {currentResult.notes && (
         <div style={{
           padding: '10px 14px', background: '#fff8f0',
           border: '1px solid #ffe0b2', borderRadius: 4,
           fontSize: 13, color: '#7c4400', marginTop: 8
         }}>
-          <strong>Observações:</strong> {result.notes}
+          <strong>Observações:</strong> {currentResult.notes}
         </div>
       )}
 
-      {result.dependencies?.length > 0 && (
+      {currentResult.dependencies?.length > 0 && (
         <div style={{
           padding: '10px 14px', background: 'var(--sap-bg)',
           border: '1px solid var(--sap-border)', borderRadius: 4,
           fontSize: 12, color: 'var(--sap-subtle)', marginTop: 8
         }}>
-          <strong>Dependências:</strong> {result.dependencies.join(', ')}
+          <strong>Dependências:</strong> {currentResult.dependencies.join(', ')}
         </div>
       )}
     </div>
   )
+}
+
+// ─── EF Mode Components ────────────────────────────────────────────────────────
+
+function EfUploadStep({ onLoaded }) {
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+
+  const handlePick = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await window.api.readEfDocx()
+      if (res.canceled) return
+      if (!res.success) throw new Error(res.error || 'Erro ao ler arquivo')
+      onLoaded(res)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24, alignItems: 'center', paddingTop: 32 }}>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ fontSize: 40, marginBottom: 12, opacity: 0.6 }}>📄</div>
+        <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--sap-text)', marginBottom: 8 }}>
+          Carregar Especificação Funcional
+        </div>
+        <div style={{ fontSize: 13, color: 'var(--sap-subtle)', maxWidth: 380, lineHeight: 1.6 }}>
+          Selecione o arquivo Word (.docx) da EF. O agente irá ler as seções
+          de Pedido Funcional, Visão Geral e Especificação e gerar o código ABAP automaticamente.
+        </div>
+      </div>
+
+      <button
+        onClick={handlePick}
+        disabled={loading}
+        style={{
+          padding: '10px 28px', fontSize: 14, fontWeight: 600,
+          background: loading ? 'var(--sap-border)' : 'var(--sap-primary)',
+          color: loading ? 'var(--sap-subtle)' : '#fff',
+          border: 'none', borderRadius: 4, cursor: loading ? 'not-allowed' : 'pointer',
+          fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 8
+        }}
+      >
+        {loading && (
+          <span style={{
+            width: 14, height: 14, border: '2px solid rgba(255,255,255,0.4)',
+            borderTop: '2px solid #fff', borderRadius: '50%',
+            animation: 'spin 0.8s linear infinite', display: 'inline-block'
+          }} />
+        )}
+        {loading ? 'Lendo arquivo...' : 'Selecionar EF (.docx)'}
+      </button>
+
+      {error && (
+        <div style={{
+          padding: '10px 14px', background: '#fff8f6',
+          border: '1px solid #f5c6bc', borderRadius: 4, fontSize: 13, color: '#bb0000', maxWidth: 420
+        }}>
+          <strong>Erro:</strong> {error}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function EfReviewStep({ efData, setEfData, providers, generating, genError, genResult, genSavedPath, onGenerate }) {
+  const active = getActiveProvider(providers)
+  const [addingFiles, setAddingFiles] = useState(false)
+
+  const handleAddPrograms = async () => {
+    setAddingFiles(true)
+    try {
+      const res = await window.api.pickAbapFiles()
+      if (res.canceled || !res.success) return
+      setEfData(prev => ({
+        ...prev,
+        attachedPrograms: [...(prev.attachedPrograms || []), ...res.files]
+      }))
+    } finally {
+      setAddingFiles(false)
+    }
+  }
+
+  const removeProgram = (idx) => {
+    setEfData(prev => ({
+      ...prev,
+      attachedPrograms: (prev.attachedPrograms || []).filter((_, i) => i !== idx)
+    }))
+  }
+
+  if (genResult) {
+    return (
+      <>
+        <div style={{
+          marginBottom: 12, padding: '9px 14px', borderRadius: 4, fontSize: 12,
+          background: '#f3faf5', border: '1px solid #c3e6cb', color: '#107e3e',
+          display: 'flex', alignItems: 'center', gap: 8
+        }}>
+          <span style={{
+            width: 16, height: 16, borderRadius: '50%', background: '#107e3e',
+            color: '#fff', fontSize: 10, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+          }}>✓</span>
+          Código gerado e salvo automaticamente na sua conta.
+          {genSavedPath && <span style={{ color: 'var(--sap-subtle)' }}>Arquivos locais: <strong>{genSavedPath}</strong></span>}
+        </div>
+        <ResultContent result={genResult} programName={efData.data?.projectName || 'ABAP'} providers={providers} />
+      </>
+    )
+  }
+
+  const { data = {}, fileName = '' } = efData
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Arquivo carregado */}
+      <div style={{
+        padding: '10px 14px', background: '#f3faf5',
+        border: '1px solid #c3e6cb', borderRadius: 4,
+        fontSize: 13, color: '#107e3e', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap'
+      }}>
+        <span>✓</span>
+        <span><strong>{fileName}</strong> carregado com sucesso</span>
+        {(efData.images?.length > 0) && (
+          <span style={{
+            marginLeft: 'auto', fontSize: 11, fontWeight: 600,
+            background: '#0070f2', color: '#fff',
+            padding: '2px 8px', borderRadius: 10
+          }}>
+            {efData.images.length} imagem{efData.images.length > 1 ? 'ns' : ''} extraída{efData.images.length > 1 ? 's' : ''}
+          </span>
+        )}
+        {(efData.images?.length === 0) && (
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--sap-subtle)' }}>
+            sem imagens PNG/JPG
+          </span>
+        )}
+      </div>
+
+      {/* Dados extraídos */}
+      <div style={{
+        padding: '14px 16px', background: 'var(--sap-bg)',
+        border: '1px solid var(--sap-border)', borderRadius: 4,
+        display: 'flex', flexDirection: 'column', gap: 10
+      }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--sap-subtle)', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+          Dados extraídos da EF
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <Field label="Nome do Projeto">
+            <input value={efData.data?.projectName || ''} onChange={e => setEfData(p => ({ ...p, data: { ...p.data, projectName: e.target.value } }))} style={inputStyle} />
+          </Field>
+          <Field label="Empresa / Mandante">
+            <input value={efData.data?.empresa || ''} onChange={e => setEfData(p => ({ ...p, data: { ...p.data, empresa: e.target.value } }))} style={inputStyle} />
+          </Field>
+        </div>
+
+        <Field label="Título">
+          <input value={efData.data?.titulo || ''} onChange={e => setEfData(p => ({ ...p, data: { ...p.data, titulo: e.target.value } }))} style={inputStyle} />
+        </Field>
+
+        <Field label="Descrição Resumida">
+          <input value={efData.data?.descricaoResumida || ''} onChange={e => setEfData(p => ({ ...p, data: { ...p.data, descricaoResumida: e.target.value } }))} style={inputStyle} />
+        </Field>
+
+        {data.visaoGeral && (
+          <Field label="Visão Geral (seção 3.1)">
+            <textarea value={data.visaoGeral} onChange={e => setEfData(p => ({ ...p, data: { ...p.data, visaoGeral: e.target.value } }))} rows={4} style={textareaStyle} />
+          </Field>
+        )}
+
+        {data.especificacaoFuncional && (
+          <Field label="Especificação Funcional (seção 3.2)">
+            <textarea value={data.especificacaoFuncional} onChange={e => setEfData(p => ({ ...p, data: { ...p.data, especificacaoFuncional: e.target.value } }))} rows={6} style={textareaStyle} />
+          </Field>
+        )}
+      </div>
+
+      {/* Programas ABAP anexados */}
+      <div style={{
+        padding: '14px 16px', background: 'var(--sap-bg)',
+        border: '1px solid var(--sap-border)', borderRadius: 4
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--sap-subtle)', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+              Programas Existentes (opcional)
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--sap-subtle)', marginTop: 2 }}>
+              Anexe os programas atuais caso a EF seja uma melhoria
+            </div>
+          </div>
+          <button onClick={handleAddPrograms} disabled={addingFiles} style={addBtnStyle}>
+            {addingFiles ? 'Aguarde...' : '+ Adicionar .abap / .txt'}
+          </button>
+        </div>
+
+        {(efData.attachedPrograms || []).length === 0 ? (
+          <div style={{ fontSize: 12, color: 'var(--sap-subtle)', fontStyle: 'italic' }}>
+            Nenhum programa anexado
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {(efData.attachedPrograms || []).map((prog, i) => (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '6px 10px', background: 'var(--sap-base)',
+                border: '1px solid var(--sap-border)', borderRadius: 4
+              }}>
+                <span style={{ fontSize: 11, color: 'var(--sap-primary)', fontFamily: 'monospace', flex: 1 }}>
+                  {prog.name}
+                </span>
+                <span style={{ fontSize: 11, color: 'var(--sap-subtle)' }}>
+                  {(prog.content?.length || 0).toLocaleString()} chars
+                </span>
+                <button onClick={() => removeProgram(i)} style={removeBtnStyle}>×</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Provedor ativo */}
+      {active ? (
+        <div style={{
+          padding: '12px 16px', background: 'var(--sap-bg)',
+          border: '1px solid var(--sap-border)', borderRadius: 4
+        }}>
+          <div style={{ fontSize: 11, color: 'var(--sap-subtle)', textTransform: 'uppercase', marginBottom: 3 }}>
+            Provedor de IA ativo
+          </div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--sap-text)' }}>
+            {active.label}
+            {active.isIntegration
+              ? <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 400, color: 'var(--sap-subtle)', fontStyle: 'italic' }}>CLI local</span>
+              : <span style={{ fontWeight: 400, color: 'var(--sap-subtle)' }}> — {active.model}</span>
+            }
+          </div>
+        </div>
+      ) : (
+        <div style={{
+          padding: '12px 16px', background: '#fff8f6',
+          border: '1px solid #f5c6bc', borderRadius: 4, fontSize: 13, color: '#bb0000'
+        }}>
+          Nenhum provedor de IA configurado. Acesse <strong>Configurações → IA</strong>.
+        </div>
+      )}
+
+      {genError && (
+        <div style={{
+          padding: '10px 14px', background: '#fff8f6',
+          border: '1px solid #f5c6bc', borderRadius: 4, fontSize: 13, color: '#bb0000'
+        }}>
+          <strong>Erro:</strong> {genError}
+        </div>
+      )}
+
+      <button
+        onClick={onGenerate}
+        disabled={generating || !active}
+        style={{
+          padding: '9px 24px', fontSize: 14, fontWeight: 600, alignSelf: 'flex-start',
+          background: generating || !active ? 'var(--sap-border)' : 'var(--sap-primary)',
+          color: generating || !active ? 'var(--sap-subtle)' : '#fff',
+          border: 'none', borderRadius: 4, cursor: generating || !active ? 'not-allowed' : 'pointer',
+          fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 8
+        }}
+      >
+        {generating && (
+          <span style={{
+            width: 14, height: 14, border: '2px solid rgba(255,255,255,0.4)',
+            borderTop: '2px solid #fff', borderRadius: '50%',
+            animation: 'spin 0.8s linear infinite', display: 'inline-block'
+          }} />
+        )}
+        {generating ? 'Gerando código...' : 'Gerar Código a partir da EF'}
+      </button>
+
+      {!generating && active && (efData.images?.length > 0) && (
+        <div style={{ fontSize: 12, color: 'var(--sap-subtle)', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ color: '#0070f2', fontWeight: 600 }}>●</span>
+          {efData.images.length} imagem{efData.images.length > 1 ? 'ns' : ''} PNG/JPG
+          {active.isIntegration
+            ? ' referenciada(s) no prompt do agente'
+            : ` será${efData.images.length > 1 ? 'ão' : ''} enviada${efData.images.length > 1 ? 's' : ''} ao modelo via visão`
+          }
+        </div>
+      )}
+
+      {generating && (
+        <div style={{ fontSize: 13, color: 'var(--sap-subtle)' }}>
+          {active?.isIntegration
+            ? 'Aguarde — o agente CLI está processando a EF. Isso pode levar 1-2 minutos...'
+            : 'Aguarde enquanto o código é gerado a partir da Especificação Funcional...'}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Build prompt from EF data ─────────────────────────────────────────────────
+
+function buildEfPrompt(efData, sapVersion) {
+  const d = efData.data || {}
+  let p = 'GERAR CÓDIGO ABAP A PARTIR DE ESPECIFICAÇÃO FUNCIONAL\n\n'
+
+  if (sapVersion) p += `Versão SAP do ambiente: ${sapVersion}\n`
+  if (d.projectName) p += `Projeto: ${d.projectName}\n`
+  if (d.empresa) p += `Empresa/Mandante: ${d.empresa}\n`
+  if (d.titulo) p += `Título: ${d.titulo}\n`
+  if (d.descricaoResumida) p += `Descrição: ${d.descricaoResumida}\n`
+  p += '\n'
+
+  if (d.visaoGeral?.trim()) {
+    p += `VISÃO GERAL DO PROCESSO (seção 3.1):\n${d.visaoGeral.trim()}\n\n`
+  }
+
+  if (d.especificacaoFuncional?.trim()) {
+    p += `ESPECIFICAÇÃO FUNCIONAL DETALHADA (seção 3.2):\n${d.especificacaoFuncional.trim()}\n\n`
+  }
+
+  const progs = efData.attachedPrograms || []
+  if (progs.length) {
+    p += `PROGRAMAS ABAP EXISTENTES (contexto — esta EF é uma melhoria):\n`
+    for (const prog of progs) {
+      p += `\n=== ${prog.name} ===\n${prog.content}\n`
+    }
+    p += '\n'
+    p += 'Os programas acima são a versão atual. Implemente as melhorias conforme a EF.\n\n'
+  }
+
+  p += 'Gere o código ABAP completo baseado na EF. '
+  p += 'Escolha o tipo de objeto mais adequado (REPORT, FUNC, CLAS, ENHO ou PROG). '
+  p += 'Siga todas as regras: Fast Code, nomenclatura Z, sem SELECT em LOOP, ALV correto.'
+  return p
 }
 
 // ─── Create Modal ──────────────────────────────────────────────────────────────
@@ -684,8 +1251,21 @@ const DEFAULT_FORM = {
 
 function CreateModal({ onClose, onSaved, user, providers }) {
   const { saveProgram } = useAbapStore()
+  const { sapVersion } = useAiStore()
+  const { getFlowPrompt } = useAgentStore()
+
+  // mode: null = tela inicial, 'ef' = fluxo EF, 'manual' = wizard manual
+  const [mode, setMode] = useState(null)
+
+  // Estado do wizard manual
   const [step, setStep] = useState(0)
   const [form, setForm] = useState(DEFAULT_FORM)
+
+  // Estado do fluxo EF
+  const [efData, setEfData] = useState(null)     // { data, fileName, attachedPrograms, rawText }
+  const [efStep, setEfStep] = useState('upload') // 'upload' | 'review'
+
+  // Estado comum (geração)
   const [generating, setGenerating] = useState(false)
   const [genError, setGenError] = useState(null)
   const [genResult, setGenResult] = useState(null)
@@ -696,51 +1276,64 @@ function CreateModal({ onClose, onSaved, user, providers }) {
   const totalSteps = steps.length
   const isLastStep = step === totalSteps
 
+  // ── Save helpers ────────────────────────────────────────────────────────────
+  const saveEfResult = async (parsed, currentEfData, savedPath) => {
+    const name = currentEfData.data?.projectName || currentEfData.data?.titulo || 'EF_PROGRAM'
+    const description = currentEfData.data?.descricaoResumida || currentEfData.data?.titulo || ''
+    // Remove imagens base64 do metadata antes de salvar (muito pesado para o banco)
+    const { images: _imgs, ...metaSafe } = currentEfData
+    const res = await saveProgram({
+      name,
+      type: parsed?.files?.[0]?.type || 'REPORT',
+      description,
+      metadata: { ...metaSafe, savedPath },
+      result: parsed
+    })
+    if (res.success) onSaved?.()
+    return res
+  }
+
+  // ── Geração ─────────────────────────────────────────────────────────────────
   const handleGenerate = async () => {
     const active = getActiveProvider(providers)
-    console.log('[ABAP-GEN] getActiveProvider =>', active)
-    if (!active) {
-      console.warn('[ABAP-GEN] Nenhum provider ativo encontrado. providers =>', providers)
-      return
-    }
+    if (!active) return
     setGenerating(true)
     setGenError(null)
     setGenResult(null)
     setGenSavedPath(null)
     try {
-      const userPrompt = buildAbapPrompt(form)
-      console.log('[ABAP-GEN] userPrompt (primeiros 300):', userPrompt.slice(0, 300))
+      const userPrompt = mode === 'ef' ? buildEfPrompt(efData, sapVersion) : buildAbapPrompt(form, sapVersion)
+      const programName = mode === 'ef' ? (efData.data?.projectName || 'ABAP_EF') : (form.name || 'ABAP_PROGRAM')
+      // ── IMAGENS DESABILITADAS TEMPORARIAMENTE ──────────────────────────────
+      // TODO: reativar quando confirmar suporte multimodal no provider ativo
+      // const images = mode === 'ef' ? (efData.images || []) : []
+      const images = []
       let rawText
 
       if (active.isIntegration) {
-        // Integração CLI: Claude Code ou Codex — roda no processo main
-        console.log('[ABAP-GEN] Chamando generateIntegration via IPC...')
         const res = await window.api.generateIntegration({
           integrationType: active.integrationType,
-          systemPrompt: abaperPrompt,
+          systemPrompt: getFlowPrompt('abap'),
           userMessage: userPrompt,
-          programName: form.name || 'ABAP_PROGRAM'
+          programName,
+          images
         })
-        console.log('[ABAP-GEN] IPC response:', { success: res.success, contentLength: res.content?.length, savedTo: res.savedTo, error: res.error })
         if (!res.success) throw new Error(res.error)
         rawText = res.content
         if (res.savedTo) setGenSavedPath(res.savedTo)
       } else {
-        // Provedor via API: fluxo padrão
-        console.log('[ABAP-GEN] Chamando callAI via API...')
-        rawText = await callAI(active, abaperPrompt, userPrompt)
-        console.log('[ABAP-GEN] callAI respondeu. rawText length:', rawText?.length)
+        rawText = await callAI(active, getFlowPrompt('abap'), userPrompt, images)
       }
 
       const parsed = parseJSONResponse(rawText)
-      console.log('[ABAP-GEN] parseJSONResponse OK. files:', parsed?.files?.length)
       setGenResult(parsed)
-      notify(
-        '✓ Código ABAP gerado',
-        `${parsed?.files?.length ?? 0} arquivo(s) gerado(s) — ${form.name || 'programa'}`
-      )
+      notify('✓ Código ABAP gerado', `${parsed?.files?.length ?? 0} arquivo(s) gerado(s) — ${programName}`)
+
+      // Auto-save no banco após geração no modo EF (em background, sem fechar)
+      if (mode === 'ef') {
+        saveEfResult(parsed, efData, genSavedPath)
+      }
     } catch (err) {
-      console.error('[ABAP-GEN] ERRO:', err.message)
       setGenError(err.message)
     } finally {
       setGenerating(false)
@@ -749,25 +1342,69 @@ function CreateModal({ onClose, onSaved, user, providers }) {
 
   const handleSave = async () => {
     if (!genResult) return
+    const name = form.name || 'SEM_NOME'
     const res = await saveProgram({
-      name: form.name || 'SEM_NOME',
+      name,
       type: form.type,
       description: form.description || form.context?.slice(0, 100) || '',
       metadata: form,
       result: genResult
     })
-    if (res.success) {
-      onSaved?.()
-      onClose()
-    }
+    if (res.success) { onSaved?.(); onClose() }
   }
 
-  const stepLabel = (i) => {
-    if (i === 0) return 'Tipo'
-    return steps[i - 1] || ''
-  }
+  // ── Render: tela inicial ────────────────────────────────────────────────────
+  const renderIntro = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ fontSize: 14, color: 'var(--sap-subtle)', marginBottom: 4 }}>
+        Como deseja criar o objeto ABAP?
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        {/* Card: Carregar EF */}
+        <div
+          onClick={() => setMode('ef')}
+          style={{
+            padding: '20px 18px', border: '2px solid var(--sap-primary)',
+            borderRadius: 6, cursor: 'pointer', background: 'var(--sap-primary)08',
+            transition: 'all 0.15s', display: 'flex', flexDirection: 'column', gap: 10
+          }}
+        >
+          <div style={{ fontSize: 26 }}>📄</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--sap-primary)' }}>
+            Carregar Especificação Funcional
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--sap-subtle)', lineHeight: 1.6 }}>
+            Importe um arquivo Word (.docx) com a EF. O agente lê as seções de
+            Pedido Funcional, Visão Geral e Especificação e gera o código automaticamente.
+            Também suporta anexar programas existentes para melhorias.
+          </div>
+        </div>
+        {/* Card: Manual */}
+        <div
+          onClick={() => setMode('manual')}
+          style={{
+            padding: '20px 18px', border: '2px solid var(--sap-border)',
+            borderRadius: 6, cursor: 'pointer', background: 'var(--sap-base)',
+            transition: 'all 0.15s', display: 'flex', flexDirection: 'column', gap: 10
+          }}
+        >
+          <div style={{ fontSize: 26 }}>✏️</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--sap-text)' }}>
+            Criar Manualmente
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--sap-subtle)', lineHeight: 1.6 }}>
+            Preencha o wizard passo a passo: tipo de objeto, identificação, contexto,
+            regras de negócio e tabelas. Controle total sobre cada detalhe do código.
+          </div>
+        </div>
+      </div>
+    </div>
+  )
 
-  const renderStepContent = () => {
+  // ── Render: sidebar de steps para o wizard manual ───────────────────────────
+  const stepLabel = (i) => i === 0 ? 'Tipo' : steps[i - 1] || ''
+
+  const renderManualStepContent = () => {
     if (step === 0) {
       return (
         <div>
@@ -795,7 +1432,6 @@ function CreateModal({ onClose, onSaved, user, providers }) {
         </div>
       )
     }
-
     const stepName = steps[step - 1]
     switch (stepName) {
       case 'Identificação': return <StepIdentification form={form} update={update} user={user} />
@@ -809,12 +1445,18 @@ function CreateModal({ onClose, onSaved, user, providers }) {
           form={form} providers={providers}
           generating={generating} genError={genError} genResult={genResult}
           genSavedPath={genSavedPath}
+          sapVersion={sapVersion}
           onGenerate={handleGenerate}
         />
       )
       default: return null
     }
   }
+
+  // ── Layout: decide header badge e título ────────────────────────────────────
+  const headerBadge = mode === 'ef' ? 'EF' : form.type
+  const headerBadgeColor = mode === 'ef' ? '#0070f2' : (TYPE_COLORS[form.type] || 'var(--sap-primary)')
+  const headerTitle = mode === null ? 'Novo Objeto ABAP' : mode === 'ef' ? 'A partir de Especificação Funcional' : 'Novo Objeto ABAP'
 
   return (
     <div style={{
@@ -834,11 +1476,10 @@ function CreateModal({ onClose, onSaved, user, providers }) {
         }}>
           <span style={{
             fontSize: 11, fontWeight: 700, color: '#fff',
-            background: TYPE_COLORS[form.type] || 'var(--sap-primary)',
-            padding: '2px 8px', borderRadius: 3
-          }}>{form.type}</span>
+            background: headerBadgeColor, padding: '2px 8px', borderRadius: 3
+          }}>{headerBadge}</span>
           <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--sap-text)' }}>
-            Novo Objeto ABAP
+            {headerTitle}
           </span>
           <button onClick={onClose} style={{
             marginLeft: 'auto', background: 'none', border: 'none',
@@ -848,45 +1489,96 @@ function CreateModal({ onClose, onSaved, user, providers }) {
 
         {/* Body */}
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-          {/* Step indicator */}
-          <div style={{
-            width: 176, borderRight: '1px solid var(--sap-border)', padding: '20px 0',
-            background: 'var(--sap-bg)', flexShrink: 0, overflowY: 'auto'
-          }}>
-            {Array.from({ length: totalSteps + 1 }, (_, i) => {
-              const done = i < step
-              const active = i === step
-              const label = stepLabel(i)
-              return (
-                <div key={i} style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '9px 16px',
-                  background: active ? 'var(--sap-primary)0f' : 'transparent',
-                  borderLeft: active ? '3px solid var(--sap-primary)' : '3px solid transparent',
-                  cursor: i <= step ? 'pointer' : 'default',
-                  opacity: i > step ? 0.45 : 1
-                }} onClick={() => { if (i <= step) setStep(i) }}>
-                  <div style={{
-                    width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
-                    background: done ? '#107e3e' : active ? 'var(--sap-primary)' : 'var(--sap-border)',
-                    color: done || active ? '#fff' : 'var(--sap-subtle)',
-                    fontSize: 11, fontWeight: 700,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center'
-                  }}>
-                    {done ? '✓' : i + 1}
-                  </div>
-                  <span style={{
-                    fontSize: 12, fontWeight: active ? 600 : 400,
-                    color: active ? 'var(--sap-primary)' : done ? 'var(--sap-text)' : 'var(--sap-subtle)'
-                  }}>{label}</span>
-                </div>
-              )
-            })}
-          </div>
+
+          {/* Step sidebar — só no modo manual ou EF com arquivo carregado */}
+          {mode !== null && (
+            <div style={{
+              width: 176, borderRight: '1px solid var(--sap-border)', padding: '20px 0',
+              background: 'var(--sap-bg)', flexShrink: 0, overflowY: 'auto'
+            }}>
+              {mode === 'ef' ? (
+                // Sidebar do fluxo EF
+                [['upload', 'Carregar EF'], ['review', 'Gerar']].map(([key, label], i) => {
+                  const isDone = key === 'upload' && efStep === 'review'
+                  const isActive = efStep === key
+                  return (
+                    <div key={key} style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '9px 16px',
+                      background: isActive ? 'var(--sap-primary)0f' : 'transparent',
+                      borderLeft: isActive ? '3px solid var(--sap-primary)' : '3px solid transparent',
+                      cursor: isDone ? 'pointer' : 'default',
+                      opacity: !isDone && !isActive ? 0.45 : 1
+                    }} onClick={() => { if (isDone) setEfStep('upload') }}>
+                      <div style={{
+                        width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
+                        background: isDone ? '#107e3e' : isActive ? 'var(--sap-primary)' : 'var(--sap-border)',
+                        color: isDone || isActive ? '#fff' : 'var(--sap-subtle)',
+                        fontSize: 11, fontWeight: 700,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center'
+                      }}>
+                        {isDone ? '✓' : i + 1}
+                      </div>
+                      <span style={{
+                        fontSize: 12, fontWeight: isActive ? 600 : 400,
+                        color: isActive ? 'var(--sap-primary)' : isDone ? 'var(--sap-text)' : 'var(--sap-subtle)'
+                      }}>{label}</span>
+                    </div>
+                  )
+                })
+              ) : (
+                // Sidebar do wizard manual
+                Array.from({ length: totalSteps + 1 }, (_, i) => {
+                  const done = i < step
+                  const active = i === step
+                  return (
+                    <div key={i} style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '9px 16px',
+                      background: active ? 'var(--sap-primary)0f' : 'transparent',
+                      borderLeft: active ? '3px solid var(--sap-primary)' : '3px solid transparent',
+                      cursor: i <= step ? 'pointer' : 'default',
+                      opacity: i > step ? 0.45 : 1
+                    }} onClick={() => { if (i <= step) setStep(i) }}>
+                      <div style={{
+                        width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
+                        background: done ? '#107e3e' : active ? 'var(--sap-primary)' : 'var(--sap-border)',
+                        color: done || active ? '#fff' : 'var(--sap-subtle)',
+                        fontSize: 11, fontWeight: 700,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center'
+                      }}>
+                        {done ? '✓' : i + 1}
+                      </div>
+                      <span style={{
+                        fontSize: 12, fontWeight: active ? 600 : 400,
+                        color: active ? 'var(--sap-primary)' : done ? 'var(--sap-text)' : 'var(--sap-subtle)'
+                      }}>{stepLabel(i)}</span>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          )}
 
           {/* Content */}
-          <div style={{ flex: 1, padding: '24px', overflowY: 'auto' }}>
-            {renderStepContent()}
+          <div style={{ flex: 1, padding: mode === null ? '32px 40px' : '24px', overflowY: 'auto' }}>
+            {mode === null && renderIntro()}
+            {mode === 'ef' && efStep === 'upload' && (
+              <EfUploadStep onLoaded={(res) => {
+                setEfData({ ...res, attachedPrograms: [], images: res.images || [] })
+                setEfStep('review')
+              }} />
+            )}
+            {mode === 'ef' && efStep === 'review' && (
+              <EfReviewStep
+                efData={efData} setEfData={setEfData}
+                providers={providers}
+                generating={generating} genError={genError}
+                genResult={genResult} genSavedPath={genSavedPath}
+                onGenerate={handleGenerate}
+              />
+            )}
+            {mode === 'manual' && renderManualStepContent()}
           </div>
         </div>
 
@@ -902,9 +1594,26 @@ function CreateModal({ onClose, onSaved, user, providers }) {
             color: 'var(--sap-text)', cursor: 'pointer', fontFamily: 'inherit'
           }}>Cancelar</button>
 
+          {/* Botão voltar à tela inicial */}
+          {mode !== null && !genResult && (
+            <button onClick={() => {
+              setMode(null)
+              setEfData(null)
+              setEfStep('upload')
+              setStep(0)
+              setGenError(null)
+              setGenResult(null)
+            }} style={{
+              padding: '7px 18px', fontSize: 13, background: 'transparent',
+              border: '1px solid var(--sap-border)', borderRadius: 4,
+              color: 'var(--sap-subtle)', cursor: 'pointer', fontFamily: 'inherit'
+            }}>‹ Voltar</button>
+          )}
+
           <div style={{ flex: 1 }} />
 
-          {step > 0 && (
+          {/* Navegação do wizard manual */}
+          {mode === 'manual' && step > 0 && (
             <button onClick={() => setStep(s => s - 1)} style={{
               padding: '7px 18px', fontSize: 13, background: 'transparent',
               border: '1px solid var(--sap-border)', borderRadius: 4,
@@ -912,20 +1621,29 @@ function CreateModal({ onClose, onSaved, user, providers }) {
             }}>‹ Anterior</button>
           )}
 
-          {!isLastStep && (
-            <button
-              onClick={() => setStep(s => s + 1)}
-              disabled={step === 0 ? false : false}
-              style={{
-                padding: '7px 20px', fontSize: 13, fontWeight: 600,
-                background: 'var(--sap-primary)', color: '#fff',
-                border: 'none', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit'
-              }}>
+          {mode === 'manual' && !isLastStep && (
+            <button onClick={() => setStep(s => s + 1)} style={{
+              padding: '7px 20px', fontSize: 13, fontWeight: 600,
+              background: 'var(--sap-primary)', color: '#fff',
+              border: 'none', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit'
+            }}>
               Próximo ›
             </button>
           )}
 
-          {isLastStep && genResult && (
+          {/* EF: salvo automaticamente — botão apenas para fechar */}
+          {mode === 'ef' && genResult && (
+            <button onClick={onClose} style={{
+              padding: '7px 22px', fontSize: 13, fontWeight: 600,
+              background: '#107e3e', color: '#fff',
+              border: 'none', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit'
+            }}>
+              Fechar
+            </button>
+          )}
+
+          {/* Manual: salvar explícito */}
+          {mode === 'manual' && isLastStep && genResult && (
             <button onClick={handleSave} style={{
               padding: '7px 22px', fontSize: 13, fontWeight: 600,
               background: '#107e3e', color: '#fff',
@@ -975,7 +1693,7 @@ function ResultModal({ program, onClose }) {
           }}>×</button>
         </div>
         <div style={{ flex: 1, padding: '20px 24px', overflowY: 'auto' }}>
-          {result ? <ResultContent result={result} /> : (
+          {result ? <ResultContent result={result} programName={program.name} /> : (
             <div style={{ color: 'var(--sap-subtle)', fontSize: 14 }}>Resultado não disponível.</div>
           )}
         </div>

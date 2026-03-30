@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import { supabase } from '../lib/supabase'
 
+const SAP_VERSION_KEY = 'abapfy_sap_version'
+
 export const AI_PROVIDERS = {
   // ─── Integrações CLI (sem API key) ──────────────────────────────────────────
   claude_integration: {
@@ -68,7 +70,13 @@ const defaultState = () =>
 
 export const useAiStore = create((set, get) => ({
   providers: defaultState(),
+  sapVersion: localStorage.getItem(SAP_VERSION_KEY) || 'ECC 6.0',
   loading: false,
+
+  setSapVersion: (v) => {
+    localStorage.setItem(SAP_VERSION_KEY, v)
+    set({ sapVersion: v })
+  },
 
   loadProviders: async () => {
     set({ loading: true })

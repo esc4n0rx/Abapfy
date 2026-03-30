@@ -3,7 +3,7 @@ import { useAiStore } from '../store/aiStore'
 import { useCodeReviewStore } from '../store/codeReviewStore'
 import { getActiveProvider, parseJSONResponse } from '../lib/aiClient'
 import { notify } from '../lib/notify'
-import codeReviewPrompt from '../agents/code_review.md?raw'
+import { useAgentStore } from '../store/agentStore'
 
 // ─── Severity config ───────────────────────────────────────────────────────────
 const SEV = {
@@ -645,6 +645,7 @@ function SessionItem({ session, active, onSelect, onDelete }) {
 // ─── Main CodeReviewView ───────────────────────────────────────────────────────
 export default function CodeReviewView() {
   const { providers, loadProviders } = useAiStore()
+  const { getFlowPrompt } = useAgentStore()
   const { sessions, loading, loadSessions, createSession, updateMessages, deleteSession } = useCodeReviewStore()
 
   const [activeId, setActiveId] = useState(null)
@@ -721,7 +722,7 @@ export default function CodeReviewView() {
 
         const res = await window.api.generateIntegration({
           integrationType: active.integrationType,
-          systemPrompt: codeReviewPrompt,
+          systemPrompt: getFlowPrompt('code_review'),
           userMessage: fullPrompt,
           programName: `CodeReview_${session.name}`
         })
@@ -785,7 +786,7 @@ export default function CodeReviewView() {
       provider: active.provider,
       apiKey: active.apiKey,
       model: active.model,
-      systemPrompt: codeReviewPrompt,
+      systemPrompt: getFlowPrompt('code_review'),
       messages: apiMessages
     })
   }

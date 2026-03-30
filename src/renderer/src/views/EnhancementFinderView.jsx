@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { useAiStore } from '../store/aiStore'
 import { getActiveProvider, parseJSONResponse } from '../lib/aiClient'
-import enhancementPromptRaw from '../agents/enhancement_finder.md?raw'
+import { useAgentStore } from '../store/agentStore'
 import AbapHighlight from '../components/AbapHighlight'
 import { searchBadis, formatBadisForPrompt } from '../lib/badiSearch'
 
@@ -115,8 +115,38 @@ function EnhancementCard({ rec }) {
   )
 }
 
+function SapVersionInfo() {
+  const [show, setShow] = React.useState(false)
+  return (
+    <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+      <span
+        onMouseEnter={() => setShow(true)}
+        onMouseLeave={() => setShow(false)}
+        style={{
+          width: 15, height: 15, borderRadius: '50%', background: 'var(--sap-subtle)',
+          color: '#fff', fontSize: 9, fontWeight: 700,
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          cursor: 'default', userSelect: 'none'
+        }}
+      >i</span>
+      {show && (
+        <div style={{
+          position: 'absolute', left: 20, top: '50%', transform: 'translateY(-50%)',
+          zIndex: 200, width: 280, padding: '8px 12px',
+          background: '#2d3748', color: '#e2e8f0', borderRadius: 6,
+          fontSize: 12, lineHeight: 1.6, pointerEvents: 'none',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.35)', whiteSpace: 'pre-wrap'
+        }}>
+          {'Para verificar a versão SAP:\n• Transação SM51 → campo "Release"\n• Menu Sistema → Status\n\nAlter em: Configurações → IA'}
+        </div>
+      )}
+    </span>
+  )
+}
+
 export default function EnhancementFinderView() {
-  const { providers } = useAiStore()
+  const { providers, sapVersion } = useAiStore()
+  const { getFlowPrompt } = useAgentStore()
   const [module, setModule] = useState('MM')
   const [description, setDescription] = useState('')
   const [result, setResult] = useState(null)
@@ -138,18 +168,19 @@ export default function EnhancementFinderView() {
 
       setLoadingStep('Analisando com IA...')
       const userMessage =
-        `Módulo SAP: ${module}\n\n` +
+        `Módulo SAP: ${module}\n` +
+        `Versão SAP do ambiente: ${sapVersion || 'ECC 6.0'}\n\n` +
         `Necessidade de customização:\n${description.trim()}\n\n` +
         (badiContext ? `${badiContext}\n\n` : '') +
         `Identifique os melhores pontos de enhancement SAP para atender esse requisito.`
 
       let raw = ''
       if (provider.isIntegration) {
-        const res = await window.api.generateIntegration({ integrationType: provider.integrationType, systemPrompt: enhancementPromptRaw, userMessage, programName: 'ENH_FINDER' })
+        const res = await window.api.generateIntegration({ integrationType: provider.integrationType, systemPrompt: getFlowPrompt('enhancement'), userMessage, programName: 'ENH_FINDER' })
         if (!res.success) throw new Error(res.error)
         raw = res.content
       } else {
-        const res = await window.api.generateAI({ provider: provider.provider, apiKey: provider.apiKey, model: provider.model, systemPrompt: enhancementPromptRaw, userMessage })
+        const res = await window.api.generateAI({ provider: provider.provider, apiKey: provider.apiKey, model: provider.model, systemPrompt: getFlowPrompt('enhancement'), userMessage })
         if (!res.success) throw new Error(res.error)
         raw = res.content
       }
@@ -187,6 +218,23 @@ export default function EnhancementFinderView() {
           }}>
             {SAP_MODULES.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
           </select>
+        </div>
+
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+            <label style={{ fontSize: 13, fontWeight: 500, color: 'var(--sap-text)' }}>Versão SAP</label>
+            <SapVersionInfo />
+          </div>
+          <div style={{
+            padding: '7px 10px', fontSize: 13, borderRadius: 6,
+            border: '1px solid var(--sap-border)', background: 'var(--sap-hover-bg)',
+            color: 'var(--sap-text)', display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+          }}>
+            <span>{sapVersion || 'ECC 6.0'}</span>
+            <span style={{ fontSize: 11, color: 'var(--sap-subtle)', fontStyle: 'italic' }}>
+              Configurar em Ajustes → IA
+            </span>
+          </div>
         </div>
 
         <div>

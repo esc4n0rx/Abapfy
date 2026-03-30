@@ -5,7 +5,56 @@
 
 // ─── Provider Callers ──────────────────────────────────────────────────────────
 
-async function callClaude(apiKey, model, systemPrompt, userPrompt) {
+// ─── Vision helpers ────────────────────────────────────────────────────────────
+
+/**
+ * Modelos Groq que suportam visão (verificação por substring do nome).
+ * Outros modelos Groq recebem apenas texto — imagens são ignoradas silenciosamente.
+ */
+const GROQ_VISION_PREFIXES = ['llama-3.2', 'llama3.2', 'llava', 'minicpm']
+function groqSupportsVision(model = '') {
+  const m = model.toLowerCase()
+  return GROQ_VISION_PREFIXES.some(p => m.includes(p))
+}
+
+/** Monta content array Claude: imagens primeiro, texto no final */
+function claudeContent(text, images) {
+  if (!images?.length) return text
+  return [
+    ...images.map(img => ({
+      type: 'image',
+      source: { type: 'base64', media_type: img.mimeType, data: img.base64 }
+    })),
+    { type: 'text', text }
+  ]
+}
+
+/** Monta content array OpenAI/Groq: texto + image_url data URIs */
+function openaiContent(text, images) {
+  if (!images?.length) return text
+  return [
+    { type: 'text', text },
+    ...images.map(img => ({
+      type: 'image_url',
+      image_url: { url: `data:${img.mimeType};base64,${img.base64}` }
+    }))
+  ]
+}
+
+/** Monta parts Gemini: texto + inline_data */
+function geminiParts(text, images) {
+  const parts = [{ text }]
+  if (images?.length) {
+    for (const img of images) {
+      parts.push({ inline_data: { mime_type: img.mimeType, data: img.base64 } })
+    }
+  }
+  return parts
+}
+
+// ─── Provider Callers ──────────────────────────────────────────────────────────
+
+async function callClaude(apiKey, model, systemPrompt, userPrompt, images) {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -18,7 +67,7 @@ async function callClaude(apiKey, model, systemPrompt, userPrompt) {
       model: model || 'claude-sonnet-4-6',
       max_tokens: 8192,
       system: systemPrompt,
-      messages: [{ role: 'user', content: userPrompt }]
+      messages: [{ role: 'user', content: claudeContent(userPrompt, images) }]
     })
   })
   if (!res.ok) {
@@ -29,7 +78,7 @@ async function callClaude(apiKey, model, systemPrompt, userPrompt) {
   return data.content[0].text
 }
 
-async function callGemini(apiKey, model, systemPrompt, userPrompt) {
+async function callGemini(apiKey, model, systemPrompt, userPrompt, images) {
   const modelName = model || 'gemini-2.0-flash'
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
@@ -38,7 +87,7 @@ async function callGemini(apiKey, model, systemPrompt, userPrompt) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: systemPrompt }] },
-        contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+        contents: [{ role: 'user', parts: geminiParts(userPrompt, images) }],
         generationConfig: { maxOutputTokens: 8192, temperature: 0.3 }
       })
     }
@@ -51,7 +100,7 @@ async function callGemini(apiKey, model, systemPrompt, userPrompt) {
   return data.candidates[0].content.parts[0].text
 }
 
-async function callOpenAI(apiKey, model, systemPrompt, userPrompt) {
+async function callOpenAI(apiKey, model, systemPrompt, userPrompt, images) {
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -62,7 +111,7 @@ async function callOpenAI(apiKey, model, systemPrompt, userPrompt) {
       model: model || 'gpt-4o',
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
+        { role: 'user', content: openaiContent(userPrompt, images) }
       ],
       max_tokens: 8192,
       temperature: 0.3
@@ -76,7 +125,9 @@ async function callOpenAI(apiKey, model, systemPrompt, userPrompt) {
   return data.choices[0].message.content
 }
 
-async function callGroq(apiKey, model, systemPrompt, userPrompt) {
+async function callGroq(apiKey, model, systemPrompt, userPrompt, images) {
+  // Imagens só para modelos Groq com visão — outros recebem texto puro
+  const imgs = groqSupportsVision(model) ? images : null
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -87,7 +138,7 @@ async function callGroq(apiKey, model, systemPrompt, userPrompt) {
       model: model || 'qwen/qwen3-32b',
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
+        { role: 'user', content: openaiContent(userPrompt, imgs) }
       ],
       temperature: 0.3,
       max_tokens: 8192
@@ -107,19 +158,20 @@ async function callGroq(apiKey, model, systemPrompt, userPrompt) {
  * @param {{ provider: string, apiKey: string, model: string }} providerConfig
  * @param {string} systemPrompt
  * @param {string} userPrompt
+ * @param {Array<{base64: string, mimeType: string, name: string}>} [images]
  * @returns {Promise<string>} raw text response
  */
-export async function callAI(providerConfig, systemPrompt, userPrompt) {
+export async function callAI(providerConfig, systemPrompt, userPrompt, images) {
   const { provider, apiKey, model } = providerConfig
   switch (provider) {
     case 'claude':
-      return callClaude(apiKey, model, systemPrompt, userPrompt)
+      return callClaude(apiKey, model, systemPrompt, userPrompt, images)
     case 'gemini':
-      return callGemini(apiKey, model, systemPrompt, userPrompt)
+      return callGemini(apiKey, model, systemPrompt, userPrompt, images)
     case 'openai':
-      return callOpenAI(apiKey, model, systemPrompt, userPrompt)
+      return callOpenAI(apiKey, model, systemPrompt, userPrompt, images)
     case 'groq':
-      return callGroq(apiKey, model, systemPrompt, userPrompt)
+      return callGroq(apiKey, model, systemPrompt, userPrompt, images)
     default:
       throw new Error(`Provedor "${provider}" não suportado`)
   }
@@ -182,7 +234,7 @@ export function getActiveProvider(providers) {
 /**
  * Constrói o prompt do usuário a partir do formulário de criação ABAP.
  */
-export function buildAbapPrompt(form) {
+export function buildAbapPrompt(form, sapVersion) {
   const typeNames = {
     REPORT: 'REPORT — Relatório com tela de seleção (ALV ou lista)',
     FUNC: 'FUNCTION MODULE — Módulo de função reutilizável',
@@ -191,7 +243,8 @@ export function buildAbapPrompt(form) {
     PROG: 'PROGRAM — Programa simples sem tela de seleção padrão'
   }
 
-  let p = `Tipo de objeto: ${typeNames[form.type] || form.type}\n`
+  let p = `Versão SAP do ambiente: ${sapVersion || 'ECC 6.0'}\n`
+  p += `Tipo de objeto: ${typeNames[form.type] || form.type}\n`
   p += `Nome: ${form.name || '(não informado)'}\n`
   if (form.author) p += `Autor: ${form.author}\n`
   if (form.company) p += `Empresa/Mandante: ${form.company}\n`

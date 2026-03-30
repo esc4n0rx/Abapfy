@@ -1,6 +1,6 @@
 {
   "name": "abapfy",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "description": "Abapfy — Um conjunto de ferramentas para a área SAP",
   "author": {
     "name": "Paulo Oliveira",
@@ -56,6 +56,10 @@
       {
         "from": "src/renderer/src/docs/MODELO BASE EF.docx",
         "to": "MODELO BASE EF.docx"
+      },
+      {
+        "from": "src/renderer/src/scripts/sap_tester.py",
+        "to": "sap_tester.py"
       }
     ],
     "win": {

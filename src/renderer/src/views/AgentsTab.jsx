@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { DEFAULT_AGENTS, AGENT_TEMPLATE } from '../agents/index'
-import { useAgentStore } from '../store/agentStore'
+import { useAgentStore, FLOW_CONFIGS } from '../store/agentStore'
 
 /* ─── Markdown renderer ────────────────────────────── */
 function MdView({ content }) {
@@ -20,6 +20,7 @@ function AgentModal({ agent, isDefault, onClose, onSave, onDelete, onDuplicate }
   const [saving, setSaving]       = useState(false)
   const [deleting, setDeleting]   = useState(false)
   const [confirmDel, setConfirmDel] = useState(false)
+  const [saveError, setSaveError] = useState('')
 
   useEffect(() => {
     setForm({
@@ -29,22 +30,32 @@ function AgentModal({ agent, isDefault, onClose, onSave, onDelete, onDuplicate }
     })
     setMode('view')
     setConfirmDel(false)
+    setSaveError('')
   }, [agent])
 
   const handleSave = async () => {
     if (!form.name.trim() || !form.content.trim()) return
     setSaving(true)
-    await onSave({ id: isDefault ? undefined : agent?.id, ...form })
+    setSaveError('')
+    const res = await onSave({ id: isDefault ? undefined : agent?.id, ...form })
     setSaving(false)
-    setMode('view')
+    if (res && !res.success) {
+      setSaveError(res.error || 'Erro ao salvar agente')
+    }
+    // modal is closed by parent on success
   }
 
   const handleDelete = async () => {
     if (!confirmDel) { setConfirmDel(true); return }
     setDeleting(true)
-    await onDelete(agent.id)
+    const res = await onDelete(agent.id)
     setDeleting(false)
-    onClose()
+    if (res?.success !== false) {
+      onClose()
+    } else {
+      setSaveError(res.error || 'Erro ao excluir agente')
+      setConfirmDel(false)
+    }
   }
 
   const isNew = !agent?.id && !isDefault
@@ -61,8 +72,8 @@ function AgentModal({ agent, isDefault, onClose, onSave, onDelete, onDuplicate }
         background: 'var(--sap-base)',
         border: '1px solid var(--sap-border)',
         borderRadius: 8,
-        width: '100%', maxWidth: 780,
-        maxHeight: '88vh',
+        width: '100%', maxWidth: 960,
+        height: '82vh',
         display: 'flex', flexDirection: 'column',
         boxShadow: '0 8px 40px rgba(0,0,0,0.3)'
       }}>
@@ -184,7 +195,7 @@ function AgentModal({ agent, isDefault, onClose, onSave, onDelete, onDuplicate }
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '12px 20px',
           borderTop: '1px solid var(--sap-border)',
-          flexShrink: 0
+          flexShrink: 0, gap: 8
         }}>
           <div style={{ display: 'flex', gap: 8 }}>
             {/* Delete (user agents only) */}
@@ -201,6 +212,17 @@ function AgentModal({ agent, isDefault, onClose, onSave, onDelete, onDuplicate }
               </button>
             )}
           </div>
+
+          {/* Save error feedback */}
+          {saveError && (
+            <div style={{
+              flex: 1, fontSize: 12, color: 'var(--sap-negative)',
+              padding: '5px 10px', borderRadius: 4,
+              background: '#fdf3f3', border: '1px solid #f5c6cb'
+            }}>
+              {saveError}
+            </div>
+          )}
 
           <div style={{ display: 'flex', gap: 8 }}>
             {/* Duplicate default → user agent */}
@@ -362,10 +384,94 @@ function SectionTitle({ children }) {
   )
 }
 
+/* ─── Flow Configuration Section ────────────────────── */
+function FlowsSection() {
+  const { userAgents, agentMappings, setFlowAgent } = useAgentStore()
+
+  // All selectable agents: defaults + user agents
+  const allOptions = [
+    ...DEFAULT_AGENTS.map(a => ({ id: a.id, label: a.name, group: 'Padrão' })),
+    ...userAgents.map(a => ({ id: a.id, label: a.name, group: 'Meus Agentes' }))
+  ]
+
+  return (
+    <div style={{ marginBottom: 28 }}>
+      <SectionTitle>Configuração de Fluxos</SectionTitle>
+      <div style={{
+        border: '1px solid var(--sap-border)', borderRadius: 6, overflow: 'hidden'
+      }}>
+        {FLOW_CONFIGS.map((flow, idx) => {
+          const current = agentMappings[flow.id] || flow.defaultAgent
+          const isLast = idx === FLOW_CONFIGS.length - 1
+          return (
+            <div key={flow.id} style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '12px 16px',
+              borderBottom: isLast ? 'none' : '1px solid var(--sap-border)',
+              background: 'var(--sap-base)', gap: 16
+            }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--sap-text)' }}>
+                  {flow.label}
+                </div>
+                {current !== flow.defaultAgent && (
+                  <div style={{ fontSize: 11, color: 'var(--sap-primary)', marginTop: 2 }}>
+                    Agente personalizado
+                  </div>
+                )}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                {current !== flow.defaultAgent && (
+                  <button
+                    onClick={() => setFlowAgent(flow.id, flow.defaultAgent)}
+                    title="Restaurar padrão"
+                    style={{
+                      fontSize: 11, padding: '3px 8px', borderRadius: 3,
+                      border: '1px solid var(--sap-border)', background: 'transparent',
+                      color: 'var(--sap-subtle)', cursor: 'pointer'
+                    }}
+                  >
+                    ↺ Padrão
+                  </button>
+                )}
+                <select
+                  value={current}
+                  onChange={e => setFlowAgent(flow.id, e.target.value)}
+                  style={{
+                    padding: '6px 10px', fontSize: 12,
+                    border: `1px solid ${current !== flow.defaultAgent ? 'var(--sap-primary)' : 'var(--sap-border)'}`,
+                    borderRadius: 4, background: 'var(--sap-input-bg)',
+                    color: 'var(--sap-text)', outline: 'none', cursor: 'pointer',
+                    minWidth: 200
+                  }}
+                >
+                  <optgroup label="Agentes Padrão">
+                    {DEFAULT_AGENTS.map(a => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                  </optgroup>
+                  {userAgents.length > 0 && (
+                    <optgroup label="Meus Agentes">
+                      {userAgents.map(a => (
+                        <option key={a.id} value={a.id}>{a.name}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 /* ─── Main AgentsTab ─────────────────────────────────── */
 export default function AgentsTab() {
   const { userAgents, loadUserAgents, saveAgent, deleteAgent } = useAgentStore()
-  const [modal, setModal] = useState(null)
+  const [modal, setModal]   = useState(null)
+  const [dupMsg, setDupMsg] = useState(null) // { type: 'ok'|'error', text }
   // modal: { agent, isDefault } | null
 
   useEffect(() => { loadUserAgents() }, [])
@@ -386,28 +492,36 @@ export default function AgentsTab() {
   }, [])
 
   const handleDuplicate = useCallback(async (defaultAgent) => {
-    await saveAgent({
+    const res = await saveAgent({
       name: `${defaultAgent.name} (cópia)`,
       description: defaultAgent.description,
       content: defaultAgent.content
     })
     setModal(null)
+    if (res.success) {
+      setDupMsg({ type: 'ok', text: `"${defaultAgent.name}" duplicado para Meus Agentes` })
+    } else {
+      setDupMsg({ type: 'error', text: res.error || 'Erro ao duplicar agente' })
+    }
+    setTimeout(() => setDupMsg(null), 3500)
   }, [saveAgent])
 
   const handleSave = useCallback(async (data) => {
-    await saveAgent(data)
-    setModal(null)
+    const res = await saveAgent(data)
+    if (res.success) setModal(null)
+    return res
   }, [saveAgent])
 
   const handleDelete = useCallback(async (id) => {
-    await deleteAgent(id)
+    const res = await deleteAgent(id)
+    return res
   }, [deleteAgent])
 
   return (
     <div style={{ padding: 24, overflowY: 'auto', flex: 1 }}>
 
       {/* Page actions */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 20 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: dupMsg ? 10 : 20 }}>
         <button
           onClick={openNew}
           style={{
@@ -419,6 +533,23 @@ export default function AgentsTab() {
           + Novo Agente
         </button>
       </div>
+
+      {/* Duplicate feedback toast */}
+      {dupMsg && (
+        <div style={{
+          marginBottom: 16, padding: '8px 14px', borderRadius: 4, fontSize: 13,
+          background: dupMsg.type === 'ok' ? '#f3faf5' : '#fdf3f3',
+          color: dupMsg.type === 'ok' ? 'var(--sap-positive)' : 'var(--sap-negative)',
+          border: `1px solid ${dupMsg.type === 'ok' ? '#c3e6cb' : '#f5c6cb'}`,
+          display: 'flex', alignItems: 'center', gap: 8
+        }}>
+          <span>{dupMsg.type === 'ok' ? '✓' : '✗'}</span>
+          {dupMsg.text}
+        </div>
+      )}
+
+      {/* Flow configuration */}
+      <FlowsSection />
 
       {/* Default agents */}
       <div style={{ marginBottom: 28 }}>

@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { useAiStore } from '../store/aiStore'
 import { getActiveProvider, parseJSONResponse } from '../lib/aiClient'
-import perfPromptRaw from '../agents/performance_analyzer.md?raw'
+import { useAgentStore } from '../store/agentStore'
 import AbapHighlight from '../components/AbapHighlight'
 
 const SEV = {
@@ -92,6 +92,7 @@ function IssueCard({ issue }) {
 
 export default function PerformanceView() {
   const { providers } = useAiStore()
+  const { getFlowPrompt } = useAgentStore()
   const [code, setCode] = useState('')
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -107,11 +108,11 @@ export default function PerformanceView() {
       const userMessage = `Analise a performance do seguinte código ABAP e identifique todos os problemas:\n\n\`\`\`abap\n${code.trim()}\n\`\`\``
       let raw = ''
       if (provider.isIntegration) {
-        const res = await window.api.generateIntegration({ integrationType: provider.integrationType, systemPrompt: perfPromptRaw, userMessage, programName: 'PERF_ANALYSIS' })
+        const res = await window.api.generateIntegration({ integrationType: provider.integrationType, systemPrompt: getFlowPrompt('performance'), userMessage, programName: 'PERF_ANALYSIS' })
         if (!res.success) throw new Error(res.error)
         raw = res.content
       } else {
-        const res = await window.api.generateAI({ provider: provider.provider, apiKey: provider.apiKey, model: provider.model, systemPrompt: perfPromptRaw, userMessage })
+        const res = await window.api.generateAI({ provider: provider.provider, apiKey: provider.apiKey, model: provider.model, systemPrompt: getFlowPrompt('performance'), userMessage })
         if (!res.success) throw new Error(res.error)
         raw = res.content
       }
