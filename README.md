@@ -50,8 +50,6 @@ O Abapfy suporta dois modelos de integração:
 | Provedor | Modelo padrão | Observação |
 |----------|---------------|------------|
 | **Claude** (Anthropic) | `claude-sonnet-4-6` | Recomendado para geração de código |
-| **Gemini** (Google) | `gemini-2.0-flash` | Boa relação custo-benefício |
-| **OpenAI** | `gpt-4o` | Alta compatibilidade |
 | **Groq** | `qwen/qwen3-32b` | Mais rápido, ideal para revisões rápidas |
 
 ### Via CLI (local — sem API key)
