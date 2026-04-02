@@ -178,6 +178,45 @@ export async function callAI(providerConfig, systemPrompt, userPrompt, images) {
 }
 
 /**
+ * Remove markdown code fences (```abap / ``` etc.) de um trecho de código ABAP.
+ * Também normaliza quebras de linha para \n puro (remove \r).
+ */
+export function cleanCode(str) {
+  if (!str || typeof str !== 'string') return str
+  return str
+    .replace(/\r\n/g, '\n')           // CRLF → LF
+    .replace(/\r/g, '\n')             // CR solto → LF
+    .replace(/^```[a-z]*\s*/i, '')    // fence de abertura: ```abap, ```ABAP, ``` etc.
+    .replace(/\s*```\s*$/i, '')       // fence de fechamento
+    .trim()
+}
+
+/**
+ * Percorre o resultado parseado e limpa os campos de código conhecidos,
+ * removendo markdown fences que alguns LLMs inserem dentro do JSON.
+ */
+function sanitizeResult(parsed) {
+  if (!parsed || typeof parsed !== 'object') return parsed
+
+  // AbapView: files[].content
+  if (Array.isArray(parsed.files)) {
+    parsed.files.forEach(f => { if (f.content) f.content = cleanCode(f.content) })
+  }
+
+  // PerformanceView: issues[].fix_code
+  if (Array.isArray(parsed.issues)) {
+    parsed.issues.forEach(i => { if (i.fix_code) i.fix_code = cleanCode(i.fix_code) })
+  }
+
+  // EnhancementFinderView: recommendations[].code_skeleton
+  if (Array.isArray(parsed.recommendations)) {
+    parsed.recommendations.forEach(r => { if (r.code_skeleton) r.code_skeleton = cleanCode(r.code_skeleton) })
+  }
+
+  return parsed
+}
+
+/**
  * Remove blocos <thinking>...</thinking> da resposta (Claude extended thinking, etc.)
  * e extrai o JSON da resposta bruta.
  */
@@ -198,7 +237,7 @@ export function parseJSONResponse(rawText) {
     text = text.slice(start, end + 1)
   }
 
-  return JSON.parse(text)
+  return sanitizeResult(JSON.parse(text))
 }
 
 /**

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { DEFAULT_AGENTS, AGENT_TEMPLATE } from '../agents/index'
+import { AGENT_TEMPLATE } from '../agents/index'
 import { useAgentStore, FLOW_CONFIGS } from '../store/agentStore'
 
 /* ─── Markdown renderer ────────────────────────────── */
@@ -386,13 +386,7 @@ function SectionTitle({ children }) {
 
 /* ─── Flow Configuration Section ────────────────────── */
 function FlowsSection() {
-  const { userAgents, agentMappings, setFlowAgent } = useAgentStore()
-
-  // All selectable agents: defaults + user agents
-  const allOptions = [
-    ...DEFAULT_AGENTS.map(a => ({ id: a.id, label: a.name, group: 'Padrão' })),
-    ...userAgents.map(a => ({ id: a.id, label: a.name, group: 'Meus Agentes' }))
-  ]
+  const { userAgents, defaultAgents, agentMappings, setFlowAgent } = useAgentStore()
 
   return (
     <div style={{ marginBottom: 28 }}>
@@ -446,7 +440,7 @@ function FlowsSection() {
                   }}
                 >
                   <optgroup label="Agentes Padrão">
-                    {DEFAULT_AGENTS.map(a => (
+                    {defaultAgents.map(a => (
                       <option key={a.id} value={a.id}>{a.name}</option>
                     ))}
                   </optgroup>
@@ -469,7 +463,7 @@ function FlowsSection() {
 
 /* ─── Main AgentsTab ─────────────────────────────────── */
 export default function AgentsTab() {
-  const { userAgents, loadUserAgents, saveAgent, deleteAgent } = useAgentStore()
+  const { userAgents, defaultAgents, loadUserAgents, saveAgent, deleteAgent } = useAgentStore()
   const [modal, setModal]   = useState(null)
   const [dupMsg, setDupMsg] = useState(null) // { type: 'ok'|'error', text }
   // modal: { agent, isDefault } | null
@@ -553,22 +547,28 @@ export default function AgentsTab() {
 
       {/* Default agents */}
       <div style={{ marginBottom: 28 }}>
-        <SectionTitle>Agentes Padrão</SectionTitle>
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-          gap: 12
-        }}>
-          {DEFAULT_AGENTS.map((agent) => (
-            <AgentCard
-              key={agent.id}
-              name={agent.name}
-              description={agent.description}
-              isDefault
-              onOpen={() => openDefault(agent)}
-            />
-          ))}
-        </div>
+        <SectionTitle>Agentes Padrão ({defaultAgents.length})</SectionTitle>
+        {defaultAgents.length === 0 ? (
+          <div style={{ padding: '16px', color: 'var(--sap-subtle)', fontSize: 13, textAlign: 'center' }}>
+            Carregando agentes padrão...
+          </div>
+        ) : (
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+            gap: 12
+          }}>
+            {defaultAgents.map((agent) => (
+              <AgentCard
+                key={agent.id}
+                name={agent.name}
+                description={agent.description}
+                isDefault
+                onOpen={() => openDefault(agent)}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* User agents */}

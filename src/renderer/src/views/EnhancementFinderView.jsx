@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useAiStore } from '../store/aiStore'
-import { getActiveProvider, parseJSONResponse } from '../lib/aiClient'
+import { getActiveProvider, parseJSONResponse, cleanCode } from '../lib/aiClient'
 import { useAgentStore } from '../store/agentStore'
 import AbapHighlight from '../components/AbapHighlight'
 import { searchBadis, formatBadisForPrompt } from '../lib/badiSearch'
@@ -42,7 +42,14 @@ function RankBadge({ rank }) {
 
 function EnhancementCard({ rec }) {
   const [showCode, setShowCode] = useState(false)
+  const [copied, setCopied] = useState(false)
   const typeColor = TYPE_COLORS[rec.type] || '#6a6d70'
+
+  function handleCopySkeleton() {
+    navigator.clipboard.writeText(cleanCode(rec.code_skeleton || ''))
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
 
   return (
     <div style={{ border: '1px solid var(--sap-border)', borderRadius: 10, overflow: 'hidden', marginBottom: 14, background: 'var(--sap-base)' }}>
@@ -95,13 +102,26 @@ function EnhancementCard({ rec }) {
             </div>
           )}
           {rec.code_skeleton && (
-            <button onClick={() => setShowCode(o => !o)} style={{
-              marginLeft: 'auto', fontSize: 12, color: 'var(--sap-primary)', background: 'transparent',
-              border: '1px solid var(--sap-primary)', borderRadius: 4, padding: '4px 12px',
-              cursor: 'pointer', fontFamily: 'inherit'
-            }}>
-              {showCode ? '▲ Ocultar código' : '▼ Ver esqueleto de código'}
-            </button>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+              {showCode && (
+                <button onClick={handleCopySkeleton} style={{
+                  fontSize: 12, color: copied ? 'var(--sap-positive)' : 'var(--sap-subtle)',
+                  background: 'transparent',
+                  border: `1px solid ${copied ? 'var(--sap-positive)' : 'var(--sap-border)'}`,
+                  borderRadius: 4, padding: '4px 10px',
+                  cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.2s'
+                }}>
+                  {copied ? '✓ Copiado' : '⎘ Copiar'}
+                </button>
+              )}
+              <button onClick={() => setShowCode(o => !o)} style={{
+                fontSize: 12, color: 'var(--sap-primary)', background: 'transparent',
+                border: '1px solid var(--sap-primary)', borderRadius: 4, padding: '4px 12px',
+                cursor: 'pointer', fontFamily: 'inherit'
+              }}>
+                {showCode ? '▲ Ocultar código' : '▼ Ver esqueleto de código'}
+              </button>
+            </div>
           )}
         </div>
 

@@ -5,14 +5,14 @@ import { useAgentStore } from '../store/agentStore'
 import AbapHighlight from '../components/AbapHighlight'
 
 const SEV = {
-  critical: { color: '#bb2222', bg: '#fff5f5', border: '#ffd7d7', label: 'Crítico' },
-  high:     { color: '#c44a00', bg: '#fff3ee', border: '#ffd0b3', label: 'Alto'    },
-  medium:   { color: '#8a5a00', bg: '#fffbf0', border: '#fce8a0', label: 'Médio'   },
-  low:      { color: '#0070f2', bg: '#f0f6ff', border: '#b3d1ff', label: 'Baixo'   },
+  critical: { color: 'var(--sap-negative)', label: 'Crítico' },
+  high:     { color: 'var(--sap-critical)', label: 'Alto'    },
+  medium:   { color: '#d4a017',             label: 'Médio'   },
+  low:      { color: 'var(--sap-primary)',   label: 'Baixo'   },
 }
 
 function ScoreGauge({ score }) {
-  const color = score >= 80 ? '#107e3e' : score >= 60 ? '#e9730c' : score >= 40 ? '#c44a00' : '#bb0000'
+  const color = score >= 80 ? 'var(--sap-positive)' : score >= 60 ? 'var(--sap-critical)' : score >= 40 ? 'var(--sap-negative)' : 'var(--sap-negative)'
   const label = score >= 80 ? 'Bom' : score >= 60 ? 'Regular' : score >= 40 ? 'Ruim' : 'Crítico'
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
@@ -37,14 +37,30 @@ function ScoreGauge({ score }) {
   )
 }
 
-function IssueCard({ issue }) {
+function IssueCard({ issue, selected, onToggle }) {
   const [showFix, setShowFix] = useState(false)
   const s = SEV[issue.severity] || SEV.low
 
   return (
-    <div style={{ border: `1px solid ${s.border}`, borderRadius: 8, overflow: 'hidden', marginBottom: 12 }}>
-      <div style={{ padding: '12px 16px', background: s.bg }}>
+    <div style={{
+      border: `1px solid var(--sap-border)`,
+      borderLeft: `3px solid ${s.color}`,
+      borderRadius: 8,
+      overflow: 'hidden',
+      marginBottom: 12,
+      background: 'var(--sap-base)',
+    }}>
+      <div style={{ padding: '12px 16px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 6 }}>
+          {/* Checkbox para seleção */}
+          {issue.fix_code && (
+            <input
+              type="checkbox"
+              checked={selected}
+              onChange={onToggle}
+              style={{ marginTop: 3, cursor: 'pointer', flexShrink: 0, accentColor: s.color }}
+            />
+          )}
           <span style={{
             fontSize: 10, fontWeight: 700, color: '#fff', background: s.color,
             padding: '2px 8px', borderRadius: 3, flexShrink: 0, marginTop: 2
@@ -55,8 +71,8 @@ function IssueCard({ issue }) {
               <code style={{
                 display: 'inline-block', marginTop: 4,
                 fontFamily: 'monospace', fontSize: 11,
-                background: 'rgba(0,0,0,0.06)', padding: '1px 6px', borderRadius: 3,
-                color: 'var(--sap-text)'
+                background: 'var(--sap-base2)', padding: '1px 6px', borderRadius: 3,
+                color: 'var(--sap-text)', border: '1px solid var(--sap-border)'
               }}>{issue.line_hint}</code>
             )}
           </div>
@@ -69,7 +85,7 @@ function IssueCard({ issue }) {
         )}
       </div>
 
-      <div style={{ padding: '10px 16px', background: 'var(--sap-base)', borderTop: `1px solid ${s.border}` }}>
+      <div style={{ padding: '10px 16px', background: 'var(--sap-base2)', borderTop: '1px solid var(--sap-border)' }}>
         <div style={{ fontSize: 13, color: 'var(--sap-text)', marginBottom: issue.fix_code ? 8 : 0 }}>
           <strong>Correção:</strong> {issue.fix_description}
         </div>
@@ -90,6 +106,66 @@ function IssueCard({ issue }) {
   )
 }
 
+function ApplyModal({ code, issueCount, onClose }) {
+  const [copied, setCopied] = useState(false)
+
+  function handleCopy() {
+    navigator.clipboard.writeText(code)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+      zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center'
+    }} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{
+        width: '82%', maxWidth: 920, maxHeight: '88vh',
+        background: 'var(--sap-base)', borderRadius: 10,
+        display: 'flex', flexDirection: 'column',
+        border: '1px solid var(--sap-border)',
+        boxShadow: '0 24px 64px rgba(0,0,0,0.45)'
+      }}>
+        {/* Header */}
+        <div style={{
+          padding: '14px 20px', borderBottom: '1px solid var(--sap-border)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0
+        }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--sap-text)' }}>
+              ✅ Código com correções aplicadas
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--sap-subtle)', marginTop: 2 }}>
+              {issueCount} {issueCount === 1 ? 'correção aplicada' : 'correções aplicadas'}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={handleCopy} style={{
+              fontSize: 12, fontWeight: 600,
+              background: copied ? 'var(--sap-positive)' : 'var(--sap-primary)',
+              color: '#fff', border: 'none', borderRadius: 6,
+              padding: '6px 16px', cursor: 'pointer', fontFamily: 'inherit',
+              transition: 'background 0.2s'
+            }}>
+              {copied ? '✓ Copiado!' : '⎘ Copiar código'}
+            </button>
+            <button onClick={onClose} style={{
+              fontSize: 14, background: 'transparent', color: 'var(--sap-subtle)',
+              border: '1px solid var(--sap-border)', borderRadius: 6,
+              padding: '6px 12px', cursor: 'pointer', fontFamily: 'inherit'
+            }}>✕</button>
+          </div>
+        </div>
+        {/* Code */}
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          <AbapHighlight code={code} maxHeight={9999} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function PerformanceView() {
   const { providers } = useAiStore()
   const { getFlowPrompt } = useAgentStore()
@@ -97,13 +173,17 @@ export default function PerformanceView() {
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [selectedFixes, setSelectedFixes] = useState({})
+  const [applyLoading, setApplyLoading] = useState(false)
+  const [appliedCode, setAppliedCode] = useState('')
+  const [showApplyModal, setShowApplyModal] = useState(false)
 
   async function handleAnalyze() {
     if (!code.trim()) { setError('Cole o código ABAP para analisar.'); return }
     const provider = getActiveProvider(providers)
     if (!provider) { setError('Nenhum provedor de IA configurado.'); return }
 
-    setLoading(true); setError(''); setResult(null)
+    setLoading(true); setError(''); setResult(null); setSelectedFixes({})
     try {
       const userMessage = `Analise a performance do seguinte código ABAP e identifique todos os problemas:\n\n\`\`\`abap\n${code.trim()}\n\`\`\``
       let raw = ''
@@ -116,12 +196,52 @@ export default function PerformanceView() {
         if (!res.success) throw new Error(res.error)
         raw = res.content
       }
-      setResult(parseJSONResponse(raw))
+      const parsed = parseJSONResponse(raw)
+      setResult(parsed)
+      // Pré-selecionar todos os fixes disponíveis
+      const initial = {}
+      parsed?.issues?.forEach((issue, i) => { if (issue.fix_code) initial[i] = true })
+      setSelectedFixes(initial)
     } catch (e) { setError(`Erro: ${e.message}`) }
     finally { setLoading(false) }
   }
 
+  async function handleApplyAll() {
+    const provider = getActiveProvider(providers)
+    if (!provider) { setError('Nenhum provedor de IA configurado.'); return }
+
+    const fixes = result?.issues?.filter((_, i) => selectedFixes[i] && result.issues[i].fix_code) || []
+    if (!fixes.length) { setError('Nenhuma correção selecionada.'); return }
+
+    setApplyLoading(true); setError('')
+    try {
+      const issuesList = fixes.map((issue, i) =>
+        `${i + 1}. ${issue.title}\nCorreção: ${issue.fix_description}\nCódigo corrigido:\n\`\`\`abap\n${issue.fix_code}\n\`\`\``
+      ).join('\n\n')
+
+      const userMessage = `Você é um especialista ABAP. Abaixo está um código ABAP original com ${fixes.length} problemas identificados e suas respectivas correções.\n\nAplique TODAS as correções ao código original de forma coerente e retorne APENAS o código ABAP completo e corrigido — sem explicações, sem blocos markdown, sem comentários extras.\n\nCÓDIGO ORIGINAL:\n${code}\n\nPROBLEMAS E CORREÇÕES A APLICAR:\n${issuesList}`
+
+      let raw = ''
+      if (provider.isIntegration) {
+        const res = await window.api.generateIntegration({ integrationType: provider.integrationType, systemPrompt: 'Você é um especialista ABAP. Retorne apenas o código ABAP puro, sem blocos markdown, sem explicações.', userMessage, programName: 'PERF_APPLY' })
+        if (!res.success) throw new Error(res.error)
+        raw = res.content
+      } else {
+        const res = await window.api.generateAI({ provider: provider.provider, apiKey: provider.apiKey, model: provider.model, systemPrompt: 'Você é um especialista ABAP. Retorne apenas o código ABAP puro, sem blocos markdown, sem explicações.', userMessage })
+        if (!res.success) throw new Error(res.error)
+        raw = res.content
+      }
+
+      // Limpar blocos de código markdown caso a IA tenha adicionado
+      const cleaned = raw.replace(/^```abap\s*/i, '').replace(/\s*```$/, '').trim()
+      setAppliedCode(cleaned)
+      setShowApplyModal(true)
+    } catch (e) { setError(`Erro ao aplicar correções: ${e.message}`) }
+    finally { setApplyLoading(false) }
+  }
+
   const sevCounts = result?.issues?.reduce((acc, i) => { acc[i.severity] = (acc[i.severity] || 0) + 1; return acc }, {}) || {}
+  const fixableCount = result?.issues?.filter((_, i) => selectedFixes[i])?.length || 0
 
   return (
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden', background: 'var(--sap-bg)' }}>
@@ -148,7 +268,13 @@ export default function PerformanceView() {
               resize: 'none', boxSizing: 'border-box'
             }}
           />
-          {error && <div style={{ padding: '8px 12px', background: '#fff0f0', border: '1px solid #ffcccc', borderRadius: 6, color: '#bb0000', fontSize: 12 }}>{error}</div>}
+          {error && (
+            <div style={{
+              padding: '8px 12px', background: 'var(--sap-base2)',
+              border: '1px solid var(--sap-negative)', borderRadius: 6,
+              color: 'var(--sap-negative)', fontSize: 12
+            }}>{error}</div>
+          )}
           <button onClick={handleAnalyze} disabled={loading} style={{
             background: loading ? 'var(--sap-subtle)' : 'var(--sap-primary)', color: '#fff',
             border: 'none', borderRadius: 6, padding: '10px', fontSize: 14, fontWeight: 500,
@@ -158,7 +284,7 @@ export default function PerformanceView() {
             {loading ? <><span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⟳</span> Analisando...</> : '⚡ Analisar Performance'}
           </button>
           {result && (
-            <button onClick={() => { setResult(null); setCode('') }} style={{
+            <button onClick={() => { setResult(null); setCode(''); setSelectedFixes({}) }} style={{
               background: 'transparent', color: 'var(--sap-subtle)',
               border: '1px solid var(--sap-border)', borderRadius: 6, padding: '8px',
               fontSize: 13, cursor: 'pointer', fontFamily: 'inherit'
@@ -192,17 +318,16 @@ export default function PerformanceView() {
             <div style={{ display: 'flex', gap: 20, marginBottom: 24, padding: '16px 20px', background: 'var(--sap-base)', border: '1px solid var(--sap-border)', borderRadius: 10 }}>
               <ScoreGauge score={result.score || 0} />
               <div style={{ flex: 1 }}>
-                {/* Severity badges */}
                 <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
                   {Object.entries(SEV).map(([key, cfg]) => sevCounts[key] > 0 && (
                     <span key={key} style={{
                       fontSize: 12, fontWeight: 700, color: cfg.color,
-                      background: cfg.bg, border: `1px solid ${cfg.border}`,
+                      background: 'var(--sap-base2)', border: `1px solid ${cfg.color}`,
                       padding: '3px 10px', borderRadius: 20
                     }}>{sevCounts[key]} {cfg.label}</span>
                   ))}
                   {result.issues?.length === 0 && (
-                    <span style={{ fontSize: 13, color: '#107e3e', fontWeight: 600 }}>✓ Nenhum problema encontrado</span>
+                    <span style={{ fontSize: 13, color: 'var(--sap-positive)', fontWeight: 600 }}>✓ Nenhum problema encontrado</span>
                   )}
                 </div>
                 {result.summary && <div style={{ fontSize: 13, color: 'var(--sap-text)', lineHeight: 1.7 }}>{result.summary}</div>}
@@ -212,22 +337,52 @@ export default function PerformanceView() {
             {/* Issues */}
             {(result.issues || []).length > 0 && (
               <>
-                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--sap-subtle)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 12 }}>
-                  {result.issues.length} problema{result.issues.length !== 1 ? 's' : ''} encontrado{result.issues.length !== 1 ? 's' : ''}
+                {/* Header com contagem e botão aplicar */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--sap-subtle)', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                    {result.issues.length} problema{result.issues.length !== 1 ? 's' : ''} encontrado{result.issues.length !== 1 ? 's' : ''}
+                  </div>
+                  {fixableCount > 0 && (
+                    <button
+                      onClick={handleApplyAll}
+                      disabled={applyLoading}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        fontSize: 13, fontWeight: 600,
+                        background: applyLoading ? 'var(--sap-subtle)' : 'var(--sap-positive)',
+                        color: '#fff', border: 'none', borderRadius: 6,
+                        padding: '7px 16px', cursor: applyLoading ? 'not-allowed' : 'pointer',
+                        fontFamily: 'inherit'
+                      }}
+                    >
+                      {applyLoading
+                        ? <><span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⟳</span> Aplicando...</>
+                        : `✓ Aplicar ${fixableCount} correç${fixableCount === 1 ? 'ão' : 'ões'} selecionada${fixableCount === 1 ? '' : 's'}`
+                      }
+                    </button>
+                  )}
                 </div>
-                {result.issues.map((issue, i) => <IssueCard key={i} issue={issue} />)}
+
+                {result.issues.map((issue, i) => (
+                  <IssueCard
+                    key={i}
+                    issue={issue}
+                    selected={!!selectedFixes[i]}
+                    onToggle={() => setSelectedFixes(prev => ({ ...prev, [i]: !prev[i] }))}
+                  />
+                ))}
               </>
             )}
 
             {/* General recommendations */}
             {result.general_recommendations?.length > 0 && (
-              <div style={{ padding: '14px 16px', background: '#f0f6ff', border: '1px solid #b3d1ff', borderRadius: 8, marginTop: 8 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: '#0070f2', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 10 }}>
+              <div style={{ padding: '14px 16px', background: 'var(--sap-base2)', border: '1px solid var(--sap-border)', borderRadius: 8, marginTop: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--sap-primary)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 10 }}>
                   Recomendações Gerais
                 </div>
                 {result.general_recommendations.map((r, i) => (
                   <div key={i} style={{ display: 'flex', gap: 8, fontSize: 13, color: 'var(--sap-text)', marginBottom: 6 }}>
-                    <span style={{ color: '#0070f2', flexShrink: 0 }}>→</span>{r}
+                    <span style={{ color: 'var(--sap-primary)', flexShrink: 0 }}>→</span>{r}
                   </div>
                 ))}
               </div>
@@ -235,6 +390,15 @@ export default function PerformanceView() {
           </>
         )}
       </div>
+
+      {/* Modal: código com correções aplicadas */}
+      {showApplyModal && appliedCode && (
+        <ApplyModal
+          code={appliedCode}
+          issueCount={fixableCount}
+          onClose={() => setShowApplyModal(false)}
+        />
+      )}
     </div>
   )
 }

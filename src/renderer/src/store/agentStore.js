@@ -28,8 +28,9 @@ const loadMappings = () => {
 // ─── Store ─────────────────────────────────────────────────────────────────────
 
 export const useAgentStore = create((set, get) => ({
-  userAgents: [],
-  loading: false,
+  userAgents:    [],
+  defaultAgents: [],   // carregados do banco — disponíveis para todos os usuários autenticados
+  loading:       false,
   agentMappings: loadMappings(),
 
   // ── Flow configuration ───────────────────────────────────────────────────────
@@ -41,22 +42,42 @@ export const useAgentStore = create((set, get) => ({
   },
 
   /**
-   * Returns the system prompt for a given flow.
-   * Prefers the configured agent; falls back to the default for the flow.
+   * Retorna o system prompt para um dado flow.
+   * Prioridade: agente do usuário → agente padrão do banco → fallback local (build-time).
    */
   getFlowPrompt: (flow) => {
-    const { agentMappings, userAgents } = get()
+    const { agentMappings, userAgents, defaultAgents } = get()
     const agentId = agentMappings[flow] || FLOW_DEFAULTS[flow]
 
-    // Default agents (available immediately from build-time imports)
-    if (ALL_AGENT_PROMPTS[agentId]) return ALL_AGENT_PROMPTS[agentId]
-
-    // User agents (loaded from Supabase)
+    // 1. Agentes do usuário (Supabase, por usuário)
     const userAgent = userAgents.find(a => a.id === agentId)
     if (userAgent?.content) return userAgent.content
 
-    // Fallback to default for this flow
-    return ALL_AGENT_PROMPTS[FLOW_DEFAULTS[flow]] || ''
+    // 2. Agentes padrão do banco (Supabase, shared)
+    const dbDefault = defaultAgents.find(a => a.id === agentId)
+    if (dbDefault?.content) return dbDefault.content
+
+    // 3. Fallback local — caso o banco ainda não tenha carregado ou esteja offline
+    if (ALL_AGENT_PROMPTS[agentId]) return ALL_AGENT_PROMPTS[agentId]
+
+    // 4. Último recurso: default do flow (banco → local)
+    const flowDefault = defaultAgents.find(a => a.id === FLOW_DEFAULTS[flow])
+    return flowDefault?.content || ALL_AGENT_PROMPTS[FLOW_DEFAULTS[flow]] || ''
+  },
+
+  // ── Default agents (banco) ────────────────────────────────────────────────────
+
+  loadDefaultAgents: async () => {
+    try {
+      const { data, error } = await supabase
+        .from('default_agents')
+        .select('*')
+        .order('sort_order', { ascending: true })
+      if (error) throw error
+      set({ defaultAgents: data || [] })
+    } catch {
+      // Falha silenciosa — fallback local (ALL_AGENT_PROMPTS) continua funcionando
+    }
   },
 
   // ── User agents CRUD ─────────────────────────────────────────────────────────
@@ -64,14 +85,20 @@ export const useAgentStore = create((set, get) => ({
   loadUserAgents: async () => {
     set({ loading: true })
     try {
-      const { data, error } = await supabase
-        .from('user_agents')
-        .select('*')
-        .order('created_at', { ascending: false })
-      if (error) throw error
-      set({ userAgents: data || [], loading: false })
+      // Carrega agentes do usuário e defaults em paralelo
+      const [userRes, defaultRes] = await Promise.all([
+        supabase.from('user_agents').select('*').order('created_at', { ascending: false }),
+        supabase.from('default_agents').select('*').order('sort_order', { ascending: true })
+      ])
+      if (userRes.error) throw userRes.error
+      set({
+        userAgents:    userRes.data    || [],
+        defaultAgents: defaultRes.data || [],
+        loading: false
+      })
     } catch {
       set({ loading: false })
+      // Garante que defaults locais continuam disponíveis — nenhuma ação extra necessária
     }
   },
 

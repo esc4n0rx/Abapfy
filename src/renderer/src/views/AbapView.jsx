@@ -3,7 +3,7 @@ import AbapHighlight from '../components/AbapHighlight'
 import { useAbapStore } from '../store/abapStore'
 import { useAiStore } from '../store/aiStore'
 import { useAuthStore } from '../store/authStore'
-import { callAI, parseJSONResponse, getActiveProvider, buildAbapPrompt } from '../lib/aiClient'
+import { callAI, parseJSONResponse, getActiveProvider, buildAbapPrompt, cleanCode } from '../lib/aiClient'
 import { notify } from '../lib/notify'
 import { useAgentStore } from '../store/agentStore'
 
@@ -592,7 +592,7 @@ function StepGenerate({ form, providers, generating, genError, genResult, genSav
 function FileCard({ file }) {
   const [copied, setCopied] = useState(false)
   const copy = () => {
-    navigator.clipboard.writeText(file.content || '')
+    navigator.clipboard.writeText(cleanCode(file.content || ''))
     setCopied(true)
     setTimeout(() => setCopied(false), 1800)
   }
@@ -647,7 +647,7 @@ function ResultContent({ result, programName, providers }) {
 
   const copyAll = () => {
     const all = (currentResult.files || []).map(f =>
-      `* === ${f.type}: ${f.name} ===\n${f.content}`
+      `* === ${f.type}: ${f.name} ===\n${cleanCode(f.content || '')}`
     ).join('\n\n')
     navigator.clipboard.writeText(all)
     setCopiedAll(true)
