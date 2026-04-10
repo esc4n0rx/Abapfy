@@ -12,7 +12,7 @@ const NAV_ITEMS = [
   { id: 'dtec',         label: 'DTec',              icon: '📄', path: '/dashboard/dtec' },
   { id: 'enhancement',  label: 'Enhancement',       icon: '🔎', path: '/dashboard/enhancement' },
   { id: 'snippets',     label: 'Snippets',          icon: '✂', path: '/dashboard/snippets' },
-  { id: 'chat',         label: 'Chat Projeto',      icon: '💬', path: '/dashboard/chat' },
+  { id: 'estimativas',  label: 'Estimativas',        icon: '📊', path: '/dashboard/estimativas' },
   { id: 'settings',     label: 'Configurações',     icon: '⚒', path: '/dashboard/settings' },
   { id: 'updates',      label: 'Atualizações',      icon: '⬆', path: '/dashboard/updates' },
   { id: 'about',        label: 'Sobre',             icon: 'ℹ', path: '/dashboard/about' }

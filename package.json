@@ -1,6 +1,6 @@
 {
   "name": "abapfy",
-  "version": "1.1.0",
+  "version": "1.1.2",
   "description": "Abapfy — Um conjunto de ferramentas para a área SAP",
   "author": {
     "name": "Paulo Oliveira",
@@ -35,6 +35,12 @@
     "electron-vite": "^2.0.0",
     "png-to-ico": "^2.1.8",
     "vite": "^5.0.12"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild"
+    ]
   },
   "build": {
     "appId": "com.abapfy.app",

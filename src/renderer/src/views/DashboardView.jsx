@@ -19,7 +19,7 @@ import SnippetLibraryView from './SnippetLibraryView'
 import DtecView from './DtecView'
 import EnhancementFinderView from './EnhancementFinderView'
 import PerformanceView from './PerformanceView'
-import ChatProjetoView from './ChatProjetoView'
+import EstimativasView from './EstimativasView'
 
 function DashboardHome() {
   const navigate = useNavigate()
@@ -135,11 +135,11 @@ function DashboardHome() {
       active: true
     },
     {
-      name: 'Chat Projeto',
-      icon: '💬',
-      desc: 'Chat IA com contexto dos seus arquivos ABAP',
-      color: '#3399ff',
-      path: '/dashboard/chat',
+      name: 'Estimativas',
+      icon: '📊',
+      desc: 'Gera 3 cenários de estimativa de esforço com IA',
+      color: '#0070f2',
+      path: '/dashboard/estimativas',
       count: 0,
       countLabel: '',
       active: true
@@ -294,7 +294,7 @@ export default function DashboardView() {
             <Route path="dtec" element={<DtecView />} />
             <Route path="enhancement" element={<EnhancementFinderView />} />
             <Route path="snippets" element={<SnippetLibraryView />} />
-            <Route path="chat" element={<ChatProjetoView />} />
+            <Route path="estimativas" element={<EstimativasView />} />
             <Route path="settings/*" element={<SettingsView />} />
             <Route path="updates" element={<AtualizacoesView />} />
             <Route path="about" element={<AboutView />} />

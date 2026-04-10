@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useThemeStore } from '../store/themeStore'
 import { useAiStore, AI_PROVIDERS } from '../store/aiStore'
 
@@ -10,6 +10,8 @@ const API_PROVIDER_IDS = Object.entries(AI_PROVIDERS)
   .filter(([, m]) => !m.isIntegration)
   .map(([id]) => id)
 import AgentsTab from './AgentsTab'
+import { useEstimationParametersStore } from '../store/estimationParametersStore'
+import { useClienteParametrosStore } from '../store/clienteParametrosStore'
 
 /* ─── Shared ────────────────────────────────────────── */
 function TabBar({ tabs, active, onChange }) {
@@ -828,6 +830,587 @@ function CalculadoraTab() {
   )
 }
 
+/* ─── Estimativa Tab ────────────────────────────────── */
+const estInputStyle = {
+  width: '100%', padding: '7px 10px', fontSize: 13,
+  border: '1px solid var(--sap-border)', borderRadius: 4,
+  background: 'var(--sap-base)', color: 'var(--sap-text)',
+  outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box'
+}
+const estLabelStyle = {
+  display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--sap-subtle)',
+  textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 4
+}
+const estThStyle = {
+  padding: '8px 12px', textAlign: 'left', fontSize: 11, fontWeight: 600,
+  color: 'var(--sap-subtle)', textTransform: 'uppercase', letterSpacing: '0.4px',
+  borderBottom: '2px solid var(--sap-border)', background: 'var(--sap-bg)',
+  whiteSpace: 'nowrap', userSelect: 'none'
+}
+const estTdStyle = {
+  padding: '7px 12px', fontSize: 13, borderBottom: '1px solid var(--sap-border)',
+  color: 'var(--sap-text)'
+}
+
+function EstimativaTab() {
+  const { parametros, loading, loadParametros, addParametro, updateParametro, deleteParametro } =
+    useEstimationParametersStore()
+  const [modal, setModal] = useState(null)   // null | { mode: 'add' | 'edit', id?: string }
+  const [form, setForm]   = useState({})
+  const [saving, setSaving] = useState(false)
+  const [importErr, setImportErr] = useState(null)
+  const fileRef = useRef(null)
+
+  useEffect(() => { loadParametros() }, [])
+
+  const emptyForm = { tipo: '', objeto: '', complexidade: 'Média', analise_ef: 0, espec: 0, codific: 0, testes: 0 }
+
+  const openAdd = () => {
+    setForm({ ...emptyForm })
+    setModal({ mode: 'add' })
+  }
+
+  const openEdit = (row) => {
+    setForm({ ...row })
+    setModal({ mode: 'edit', id: row.id })
+  }
+
+  const handleSave = async () => {
+    setSaving(true)
+    if (modal.mode === 'add') {
+      await addParametro(form)
+    } else {
+      await updateParametro(modal.id, form)
+    }
+    setSaving(false)
+    setModal(null)
+  }
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('Remover este parâmetro?')) return
+    await deleteParametro(id)
+  }
+
+  const handleCsvImport = (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    setImportErr(null)
+    const reader = new FileReader()
+    reader.onload = async (ev) => {
+      try {
+        const text = ev.target.result
+        const lines = text.split(/\r?\n/).filter(l => l.trim())
+        if (lines.length < 2) throw new Error('CSV deve ter cabeçalho e ao menos uma linha de dados.')
+        const sep = lines[0].includes(';') ? ';' : ','
+        for (const line of lines.slice(1)) {
+          const p = line.split(sep).map(s => s.trim().replace(/^"|"$/g, ''))
+          if (p.length < 6) continue
+          await addParametro({
+            tipo: p[0] || '', objeto: p[1] || '', complexidade: p[2] || 'Média',
+            analise_ef: parseFloat(p[3]) || 0,
+            espec:      parseFloat(p[4]) || 0,
+            codific:    parseFloat(p[5]) || 0,
+            testes:     parseFloat(p[6]) || 0
+          })
+        }
+      } catch (err) {
+        setImportErr(err.message)
+      }
+    }
+    reader.readAsText(file)
+    e.target.value = ''
+  }
+
+  const rowTotal = (p) => {
+    const t = parseFloat(p.analise_ef || 0) + parseFloat(p.espec || 0) + parseFloat(p.codific || 0) + parseFloat(p.testes || 0)
+    return t.toFixed(1)
+  }
+
+  const complexBadge = (c) => {
+    const map = {
+      'Alta':  { bg: 'rgba(187,0,0,0.10)',   color: 'var(--sap-negative)' },
+      'Baixa': { bg: 'rgba(16,126,62,0.10)',  color: 'var(--sap-positive)' },
+      'Média': { bg: 'rgba(233,115,12,0.10)', color: 'var(--sap-critical)' }
+    }
+    const s = map[c] || map['Média']
+    return (
+      <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600, background: s.bg, color: s.color }}>
+        {c}
+      </span>
+    )
+  }
+
+  const sumCol = (col) => parametros.reduce((acc, p) => acc + parseFloat(p[col] || 0), 0).toFixed(1)
+  const sumTotal = () => parametros.reduce((acc, p) => acc + parseFloat(p.analise_ef || 0) + parseFloat(p.espec || 0) + parseFloat(p.codific || 0) + parseFloat(p.testes || 0), 0).toFixed(1)
+
+  return (
+    <div style={{ padding: 24, overflowY: 'auto', flex: 1 }}>
+
+      {/* ── Modal add/edit ── */}
+      {modal && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setModal(null)}
+        >
+          <div
+            style={{ background: 'var(--sap-base)', borderRadius: 8, width: 520, maxWidth: '95vw', boxShadow: '0 8px 32px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--sap-border)', fontWeight: 600, fontSize: 15 }}>
+              {modal.mode === 'add' ? 'Novo Parâmetro' : 'Editar Parâmetro'}
+            </div>
+
+            <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div>
+                  <label style={estLabelStyle}>Tipo</label>
+                  <input value={form.tipo || ''} onChange={e => setForm(f => ({ ...f, tipo: e.target.value }))} style={estInputStyle} placeholder="Ex: Report, Função, Classe..." />
+                </div>
+                <div>
+                  <label style={estLabelStyle}>Objeto</label>
+                  <input value={form.objeto || ''} onChange={e => setForm(f => ({ ...f, objeto: e.target.value }))} style={estInputStyle} placeholder="Nome do objeto" />
+                </div>
+              </div>
+
+              <div>
+                <label style={estLabelStyle}>Complexidade</label>
+                <select value={form.complexidade || 'Média'} onChange={e => setForm(f => ({ ...f, complexidade: e.target.value }))} style={estInputStyle}>
+                  <option>Baixa</option>
+                  <option>Média</option>
+                  <option>Alta</option>
+                </select>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12 }}>
+                <div>
+                  <label style={estLabelStyle}>Análise EF (h)</label>
+                  <input type="number" min={0} step={0.5} value={form.analise_ef ?? 0} onChange={e => setForm(f => ({ ...f, analise_ef: parseFloat(e.target.value) || 0 }))} style={{ ...estInputStyle, fontFamily: 'monospace' }} />
+                </div>
+                <div>
+                  <label style={estLabelStyle}>Espec. (h)</label>
+                  <input type="number" min={0} step={0.5} value={form.espec ?? 0} onChange={e => setForm(f => ({ ...f, espec: parseFloat(e.target.value) || 0 }))} style={{ ...estInputStyle, fontFamily: 'monospace' }} />
+                </div>
+                <div>
+                  <label style={estLabelStyle}>Codific. (h)</label>
+                  <input type="number" min={0} step={0.5} value={form.codific ?? 0} onChange={e => setForm(f => ({ ...f, codific: parseFloat(e.target.value) || 0 }))} style={{ ...estInputStyle, fontFamily: 'monospace' }} />
+                </div>
+                <div>
+                  <label style={estLabelStyle}>Testes (h)</label>
+                  <input type="number" min={0} step={0.5} value={form.testes ?? 0} onChange={e => setForm(f => ({ ...f, testes: parseFloat(e.target.value) || 0 }))} style={{ ...estInputStyle, fontFamily: 'monospace' }} />
+                </div>
+              </div>
+
+              <div style={{ padding: '8px 12px', background: 'var(--sap-bg)', borderRadius: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 12, color: 'var(--sap-subtle)', textTransform: 'uppercase', letterSpacing: '0.3px' }}>Total</span>
+                <span style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--sap-primary)', fontSize: 16 }}>
+                  {(parseFloat(form.analise_ef || 0) + parseFloat(form.espec || 0) + parseFloat(form.codific || 0) + parseFloat(form.testes || 0)).toFixed(1)} h
+                </span>
+              </div>
+            </div>
+
+            <div style={{ padding: '14px 24px', borderTop: '1px solid var(--sap-border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button onClick={() => setModal(null)} style={{ fontSize: 13, padding: '6px 16px', border: '1px solid var(--sap-border)', borderRadius: 4, background: 'transparent', color: 'var(--sap-text)', cursor: 'pointer', fontFamily: 'inherit' }}>
+                Cancelar
+              </button>
+              <button onClick={handleSave} disabled={saving} style={{ fontSize: 13, padding: '6px 18px', border: 'none', borderRadius: 4, background: 'var(--sap-primary)', color: '#fff', cursor: saving ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: saving ? 0.7 : 1 }}>
+                {saving ? 'Salvando...' : 'Salvar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Section card ── */}
+      <div className="settings-section">
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+          <div>
+            <div className="settings-section-title">Parâmetros de Estimativa</div>
+            <div style={{ fontSize: 12, color: 'var(--sap-subtle)', marginTop: 3 }}>
+              Tabela compartilhada — visível e editável por todos os usuários registrados
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input ref={fileRef} type="file" accept=".csv,.txt" style={{ display: 'none' }} onChange={handleCsvImport} />
+            <button
+              onClick={() => fileRef.current?.click()}
+              style={{ fontSize: 12, padding: '5px 14px', border: '1px solid var(--sap-border)', borderRadius: 4, background: 'transparent', color: 'var(--sap-text)', cursor: 'pointer', fontFamily: 'inherit' }}
+            >
+              Importar CSV
+            </button>
+            <button
+              onClick={openAdd}
+              style={{ fontSize: 12, padding: '5px 14px', border: '1px solid var(--sap-primary)', borderRadius: 4, background: 'transparent', color: 'var(--sap-primary)', cursor: 'pointer', fontFamily: 'inherit' }}
+            >
+              + Nova Linha
+            </button>
+          </div>
+        </div>
+
+        {importErr && (
+          <div style={{ padding: '8px 12px', background: 'rgba(187,0,0,0.08)', border: '1px solid var(--sap-negative)', borderRadius: 4, color: 'var(--sap-negative)', fontSize: 12, marginBottom: 12 }}>
+            {importErr}
+          </div>
+        )}
+
+        {loading ? (
+          <div style={{ padding: '32px', textAlign: 'center', color: 'var(--sap-subtle)', fontSize: 13 }}>Carregando...</div>
+        ) : (
+          <div style={{ overflowX: 'auto', border: '1px solid var(--sap-border)', borderRadius: 4 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 860 }}>
+              <thead>
+                <tr>
+                  <th style={{ ...estThStyle, width: 130 }}>Tipo</th>
+                  <th style={estThStyle}>Objeto</th>
+                  <th style={{ ...estThStyle, width: 110 }}>Complexidade</th>
+                  <th style={{ ...estThStyle, width: 95, textAlign: 'right' }}>Análise EF</th>
+                  <th style={{ ...estThStyle, width: 85, textAlign: 'right' }}>Espec.</th>
+                  <th style={{ ...estThStyle, width: 85, textAlign: 'right' }}>Codific.</th>
+                  <th style={{ ...estThStyle, width: 85, textAlign: 'right' }}>Testes</th>
+                  <th style={{ ...estThStyle, width: 85, textAlign: 'right' }}>Total</th>
+                  <th style={{ ...estThStyle, width: 64 }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {parametros.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} style={{ ...estTdStyle, textAlign: 'center', color: 'var(--sap-subtle)', padding: '32px 12px' }}>
+                      Nenhum parâmetro cadastrado. Clique em "+ Nova Linha" ou importe um CSV.
+                    </td>
+                  </tr>
+                ) : parametros.map((p, i) => (
+                  <tr key={p.id} style={{ background: i % 2 === 1 ? 'var(--sap-bg)' : 'var(--sap-base)' }}>
+                    <td style={estTdStyle}>{p.tipo}</td>
+                    <td style={{ ...estTdStyle, fontFamily: 'monospace', fontSize: 12 }}>{p.objeto}</td>
+                    <td style={estTdStyle}>{complexBadge(p.complexidade)}</td>
+                    <td style={{ ...estTdStyle, textAlign: 'right', fontFamily: 'monospace' }}>{parseFloat(p.analise_ef || 0).toFixed(1)}</td>
+                    <td style={{ ...estTdStyle, textAlign: 'right', fontFamily: 'monospace' }}>{parseFloat(p.espec || 0).toFixed(1)}</td>
+                    <td style={{ ...estTdStyle, textAlign: 'right', fontFamily: 'monospace' }}>{parseFloat(p.codific || 0).toFixed(1)}</td>
+                    <td style={{ ...estTdStyle, textAlign: 'right', fontFamily: 'monospace' }}>{parseFloat(p.testes || 0).toFixed(1)}</td>
+                    <td style={{ ...estTdStyle, textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: 'var(--sap-primary)' }}>{rowTotal(p)}</td>
+                    <td style={{ ...estTdStyle, padding: '4px 8px' }}>
+                      <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                        <button onClick={() => openEdit(p)} title="Editar" style={{ width: 26, height: 26, background: 'transparent', border: '1px solid var(--sap-border)', borderRadius: 4, cursor: 'pointer', color: 'var(--sap-subtle)', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✎</button>
+                        <button onClick={() => handleDelete(p.id)} title="Remover" style={{ width: 26, height: 26, background: 'transparent', border: '1px solid var(--sap-border)', borderRadius: 4, cursor: 'pointer', color: 'var(--sap-negative)', fontSize: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              {parametros.length > 0 && (
+                <tfoot>
+                  <tr style={{ background: 'var(--sap-bg)' }}>
+                    <td colSpan={3} style={{ ...estTdStyle, fontWeight: 600, fontSize: 11, textTransform: 'uppercase', color: 'var(--sap-subtle)', letterSpacing: '0.3px' }}>
+                      Total geral ({parametros.length} linha{parametros.length !== 1 ? 's' : ''})
+                    </td>
+                    <td style={{ ...estTdStyle, textAlign: 'right', fontFamily: 'monospace', fontWeight: 600 }}>{sumCol('analise_ef')}</td>
+                    <td style={{ ...estTdStyle, textAlign: 'right', fontFamily: 'monospace', fontWeight: 600 }}>{sumCol('espec')}</td>
+                    <td style={{ ...estTdStyle, textAlign: 'right', fontFamily: 'monospace', fontWeight: 600 }}>{sumCol('codific')}</td>
+                    <td style={{ ...estTdStyle, textAlign: 'right', fontFamily: 'monospace', fontWeight: 600 }}>{sumCol('testes')}</td>
+                    <td style={{ ...estTdStyle, textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: 'var(--sap-primary)' }}>{sumTotal()}</td>
+                    <td style={estTdStyle} />
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        )}
+
+        <div style={{ marginTop: 10, fontSize: 11, color: 'var(--sap-subtle)' }}>
+          Formato CSV esperado: <code style={{ fontFamily: 'monospace', background: 'var(--sap-bg)', padding: '1px 5px', borderRadius: 3 }}>Tipo;Objeto;Complexidade;Analise_EF;Espec;Codific;Testes</code>
+          {' '}(separador <code style={{ fontFamily: 'monospace', background: 'var(--sap-bg)', padding: '1px 5px', borderRadius: 3 }}>;</code> ou <code style={{ fontFamily: 'monospace', background: 'var(--sap-bg)', padding: '1px 5px', borderRadius: 3 }}>,</code>)
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ─── Cliente Parametros Section ────────────────────── */
+const CLI_FIELDS = [
+  { key: 'levantamento',   label: 'Levantam.' },
+  { key: 'impl_proposal',  label: 'Impl.\nProposal' },
+  { key: 'esp_func',       label: 'Esp.\nFunc.' },
+  { key: 'esp_tec',        label: 'Esp.\nTéc.' },
+  { key: 'codific',        label: 'Codific.' },
+  { key: 'traducao_en',    label: 'Tradução\nEN' },
+  { key: 'traducao_es',    label: 'Tradução\nES' },
+  { key: 'teste_unitario', label: 'Teste\nUnitário' },
+  { key: 'teste_qas',      label: 'Teste\n(QAS)' },
+  { key: 'bpp_pt',         label: 'BPP\nPT' },
+  { key: 'bpp_en',         label: 'BPP\nEN' },
+  { key: 'bpp_es',         label: 'BPP\nES' },
+  { key: 'teste_volume',   label: 'Teste\nVolume' },
+  { key: 'homologacao',    label: 'Homolo-\ngação' },
+  { key: 'access_control', label: 'Access\nControl' },
+  { key: 'homologacao_2',  label: 'Homolo-\nçao' },
+  { key: 'go_live',        label: 'Go-live' },
+  { key: 'documentacao',   label: 'Documen-\ntação' },
+  { key: 'gerencia',       label: 'Gerência' }
+]
+
+const CLI_EMPTY = CLI_FIELDS.reduce((acc, f) => ({ ...acc, [f.key]: 0 }), { empresa: '' })
+
+const MODAL_GROUPS = [
+  { label: null, fields: [{ key: 'empresa', label: 'Empresa', type: 'text', cols: 4 }] },
+  {
+    label: 'Fases Iniciais',
+    fields: [
+      { key: 'levantamento',  label: 'Levantam.' },
+      { key: 'impl_proposal', label: 'Impl. Proposal' },
+      { key: 'esp_func',      label: 'Esp. Func.' },
+      { key: 'esp_tec',       label: 'Esp. Téc.' },
+      { key: 'codific',       label: 'Codific.' }
+    ]
+  },
+  {
+    label: 'Tradução',
+    fields: [
+      { key: 'traducao_en', label: 'Tradução EN' },
+      { key: 'traducao_es', label: 'Tradução ES' }
+    ]
+  },
+  {
+    label: 'Testes',
+    fields: [
+      { key: 'teste_unitario', label: 'Teste Unitário' },
+      { key: 'teste_qas',      label: 'Teste (QAS)' },
+      { key: 'teste_volume',   label: 'Teste Volume' }
+    ]
+  },
+  {
+    label: 'BPP',
+    fields: [
+      { key: 'bpp_pt', label: 'BPP PT' },
+      { key: 'bpp_en', label: 'BPP EN' },
+      { key: 'bpp_es', label: 'BPP ES' }
+    ]
+  },
+  {
+    label: 'Homologação / Controle',
+    fields: [
+      { key: 'homologacao',    label: 'Homologação' },
+      { key: 'access_control', label: 'Access Control' },
+      { key: 'homologacao_2',  label: 'Homologaçao' }
+    ]
+  },
+  {
+    label: 'Finalização',
+    fields: [
+      { key: 'go_live',       label: 'Go-live' },
+      { key: 'documentacao',  label: 'Documentação' },
+      { key: 'gerencia',      label: 'Gerência' }
+    ]
+  }
+]
+
+function ClienteParametrosTab() {
+  return (
+    <div style={{ padding: 24, overflowY: 'auto', flex: 1 }}>
+      <ClienteParametrosSection />
+    </div>
+  )
+}
+
+function ClienteParametrosSection() {
+  const { clientes, loading, loadClientes, addCliente, updateCliente, deleteCliente } =
+    useClienteParametrosStore()
+  const [modal, setModal]     = useState(null)
+  const [form, setForm]       = useState({})
+  const [saving, setSaving]   = useState(false)
+  const [importErr, setImportErr] = useState(null)
+  const fileRef = useRef(null)
+
+  useEffect(() => { loadClientes() }, [])
+
+  const openAdd  = () => { setForm({ ...CLI_EMPTY }); setModal({ mode: 'add' }) }
+  const openEdit = (row) => { setForm({ ...row }); setModal({ mode: 'edit', id: row.id }) }
+
+  const handleSave = async () => {
+    setSaving(true)
+    if (modal.mode === 'add') await addCliente(form)
+    else await updateCliente(modal.id, form)
+    setSaving(false)
+    setModal(null)
+  }
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('Remover este parâmetro de cliente?')) return
+    await deleteCliente(id)
+  }
+
+  const handleCsvImport = (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    setImportErr(null)
+    const reader = new FileReader()
+    reader.onload = async (ev) => {
+      try {
+        const lines = ev.target.result.split(/\r?\n/).filter(l => l.trim())
+        if (lines.length < 2) throw new Error('CSV deve ter cabeçalho e ao menos uma linha.')
+        const sep = lines[0].includes(';') ? ';' : ','
+        const keys = ['empresa', ...CLI_FIELDS.map(f => f.key)]
+        for (const line of lines.slice(1)) {
+          const parts = line.split(sep).map(s => s.trim().replace(/^"|"$/g, ''))
+          if (!parts[0]) continue
+          const row = {}
+          keys.forEach((k, i) => { row[k] = parts[i] ?? '' })
+          await addCliente(row)
+        }
+      } catch (err) {
+        setImportErr(err.message)
+      }
+    }
+    reader.readAsText(file)
+    e.target.value = ''
+  }
+
+  const numVal = (row, key) => parseFloat(row[key] || 0).toFixed(1)
+
+  return (
+    <>
+      {/* ── Modal ── */}
+      {modal && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setModal(null)}
+        >
+          <div
+            style={{ background: 'var(--sap-base)', borderRadius: 8, width: 680, maxWidth: '96vw', maxHeight: '90vh', overflow: 'hidden', boxShadow: '0 8px 32px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--sap-border)', fontWeight: 600, fontSize: 15 }}>
+              {modal.mode === 'add' ? 'Novo Parâmetro de Cliente' : 'Editar Parâmetro de Cliente'}
+            </div>
+
+            <div style={{ padding: '20px 24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 18 }}>
+              {MODAL_GROUPS.map((group, gi) => (
+                <div key={gi}>
+                  {group.label && (
+                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--sap-subtle)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 8, paddingBottom: 4, borderBottom: '1px solid var(--sap-border)' }}>
+                      {group.label}
+                    </div>
+                  )}
+                  <div style={{ display: 'grid', gridTemplateColumns: `repeat(${group.fields[0]?.cols || group.fields.length}, 1fr)`, gap: 10 }}>
+                    {group.fields.map(f => (
+                      <div key={f.key} style={{ gridColumn: f.cols ? `span ${f.cols}` : undefined }}>
+                        <label style={estLabelStyle}>{f.label}</label>
+                        {f.type === 'text' ? (
+                          <input
+                            value={form[f.key] || ''}
+                            onChange={e => setForm(v => ({ ...v, [f.key]: e.target.value }))}
+                            style={estInputStyle}
+                            placeholder="Nome da empresa / cliente"
+                          />
+                        ) : (
+                          <input
+                            type="number" min={0} step={0.5}
+                            value={form[f.key] ?? 0}
+                            onChange={e => setForm(v => ({ ...v, [f.key]: parseFloat(e.target.value) || 0 }))}
+                            style={{ ...estInputStyle, fontFamily: 'monospace' }}
+                          />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ padding: '14px 24px', borderTop: '1px solid var(--sap-border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button onClick={() => setModal(null)} style={{ fontSize: 13, padding: '6px 16px', border: '1px solid var(--sap-border)', borderRadius: 4, background: 'transparent', color: 'var(--sap-text)', cursor: 'pointer', fontFamily: 'inherit' }}>
+                Cancelar
+              </button>
+              <button onClick={handleSave} disabled={saving} style={{ fontSize: 13, padding: '6px 18px', border: 'none', borderRadius: 4, background: 'var(--sap-primary)', color: '#fff', cursor: saving ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: saving ? 0.7 : 1 }}>
+                {saving ? 'Salvando...' : 'Salvar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Section card ── */}
+      <div className="settings-section">
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+          <div>
+            <div className="settings-section-title">Parâmetros de Cliente</div>
+            <div style={{ fontSize: 12, color: 'var(--sap-subtle)', marginTop: 3 }}>
+              Tabela compartilhada — visível e editável por todos os usuários registrados
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input ref={fileRef} type="file" accept=".csv,.txt" style={{ display: 'none' }} onChange={handleCsvImport} />
+            <button
+              onClick={() => fileRef.current?.click()}
+              style={{ fontSize: 12, padding: '5px 14px', border: '1px solid var(--sap-border)', borderRadius: 4, background: 'transparent', color: 'var(--sap-text)', cursor: 'pointer', fontFamily: 'inherit' }}
+            >
+              Importar CSV
+            </button>
+            <button
+              onClick={openAdd}
+              style={{ fontSize: 12, padding: '5px 14px', border: '1px solid var(--sap-primary)', borderRadius: 4, background: 'transparent', color: 'var(--sap-primary)', cursor: 'pointer', fontFamily: 'inherit' }}
+            >
+              + Nova Linha
+            </button>
+          </div>
+        </div>
+
+        {importErr && (
+          <div style={{ padding: '8px 12px', background: 'rgba(187,0,0,0.08)', border: '1px solid var(--sap-negative)', borderRadius: 4, color: 'var(--sap-negative)', fontSize: 12, marginBottom: 12 }}>
+            {importErr}
+          </div>
+        )}
+
+        {loading ? (
+          <div style={{ padding: '32px', textAlign: 'center', color: 'var(--sap-subtle)', fontSize: 13 }}>Carregando...</div>
+        ) : (
+          <div style={{ overflowX: 'auto', border: '1px solid var(--sap-border)', borderRadius: 4 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 1560 }}>
+              <thead>
+                <tr>
+                  <th style={{ ...estThStyle, width: 140, fontSize: 11 }}>Empresa</th>
+                  {CLI_FIELDS.map(f => (
+                    <th key={f.key} style={{ ...estThStyle, width: 72, textAlign: 'right', fontSize: 10, whiteSpace: 'pre-line', lineHeight: 1.3 }}>
+                      {f.label}
+                    </th>
+                  ))}
+                  <th style={{ ...estThStyle, width: 64 }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {clientes.length === 0 ? (
+                  <tr>
+                    <td colSpan={CLI_FIELDS.length + 2} style={{ ...estTdStyle, textAlign: 'center', color: 'var(--sap-subtle)', padding: '32px 12px' }}>
+                      Nenhum parâmetro de cliente cadastrado. Clique em "+ Nova Linha" ou importe um CSV.
+                    </td>
+                  </tr>
+                ) : clientes.map((c, i) => (
+                  <tr key={c.id} style={{ background: i % 2 === 1 ? 'var(--sap-bg)' : 'var(--sap-base)' }}>
+                    <td style={{ ...estTdStyle, fontWeight: 600, fontSize: 12 }}>{c.empresa}</td>
+                    {CLI_FIELDS.map(f => (
+                      <td key={f.key} style={{ ...estTdStyle, textAlign: 'right', fontFamily: 'monospace', fontSize: 11 }}>
+                        {numVal(c, f.key)}
+                      </td>
+                    ))}
+                    <td style={{ ...estTdStyle, padding: '4px 8px' }}>
+                      <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                        <button onClick={() => openEdit(c)} title="Editar" style={{ width: 26, height: 26, background: 'transparent', border: '1px solid var(--sap-border)', borderRadius: 4, cursor: 'pointer', color: 'var(--sap-subtle)', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✎</button>
+                        <button onClick={() => handleDelete(c.id)} title="Remover" style={{ width: 26, height: 26, background: 'transparent', border: '1px solid var(--sap-border)', borderRadius: 4, cursor: 'pointer', color: 'var(--sap-negative)', fontSize: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div style={{ marginTop: 10, fontSize: 11, color: 'var(--sap-subtle)' }}>
+          Formato CSV: <code style={{ fontFamily: 'monospace', background: 'var(--sap-bg)', padding: '1px 5px', borderRadius: 3 }}>Empresa;Levantam;ImplProposal;EspFunc;EspTec;Codific;TraducaoEN;TraducaoES;TesteUnitario;TesteQAS;BppPT;BppEN;BppES;TesteVolume;Homologacao;AccessControl;Homologacao2;GoLive;Documentacao;Gerencia</code>
+        </div>
+      </div>
+    </>
+  )
+}
+
 /* ─── Main ──────────────────────────────────────────── */
 export default function SettingsView() {
   const [tab, setTab] = useState('ui')
@@ -836,7 +1419,9 @@ export default function SettingsView() {
     { id: 'ui',          label: 'Interface' },
     { id: 'ai',          label: 'Inteligência Artificial' },
     { id: 'agents',      label: 'Agentes' },
-    { id: 'calculadora', label: 'Calculadora' }
+    { id: 'calculadora', label: 'Calculadora' },
+    { id: 'parametros',  label: 'Parâmetros de Estimativa' },
+    { id: 'clientes',    label: 'Parâmetros de Cliente' }
   ]
 
   return (
@@ -858,6 +1443,8 @@ export default function SettingsView() {
         {tab === 'ai'          && <AiTab />}
         {tab === 'agents'      && <AgentsTab />}
         {tab === 'calculadora' && <CalculadoraTab />}
+        {tab === 'parametros'  && <EstimativaTab />}
+        {tab === 'clientes'    && <ClienteParametrosTab />}
       </div>
     </div>
   )
