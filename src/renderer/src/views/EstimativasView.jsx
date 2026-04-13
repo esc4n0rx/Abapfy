@@ -145,6 +145,51 @@ function EstimativaCard({ tipo, data, accent }) {
   )
 }
 
+// ─── EF content cleaner ───────────────────────────────────────────────────────
+// Remove ruído do rawText (metadados, índice, aprovação) e mantém só o conteúdo funcional.
+// Estratégia: encontra a última ocorrência do heading "Especificação Funcional" ou
+// "Visão Geral" e coleta tudo que vem depois, parando na seção de aprovação.
+function cleanEfForPrompt(rawText) {
+  if (!rawText) return ''
+
+  const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean)
+
+  // Headings que marcam o início do conteúdo funcional real
+  const CONTENT_HEADINGS = new Set([
+    'especificação funcional', 'especificacao funcional',
+    'visão geral', 'visao geral',
+  ])
+
+  // Encontra a última ocorrência de um heading de seção de conteúdo
+  let contentStartIdx = -1
+  for (let i = 0; i < lines.length; i++) {
+    const lower = lines[i].toLowerCase()
+    if (CONTENT_HEADINGS.has(lower)) contentStartIdx = i + 1
+  }
+
+  // Se não encontrou heading, usa heurística: primeiro parágrafo > 60 chars
+  if (contentStartIdx === -1) {
+    contentStartIdx = lines.findIndex(l => l.length > 60)
+    if (contentStartIdx === -1) contentStartIdx = 0
+  }
+
+  // Padrões que sinalizam fim do conteúdo útil (tabela de aprovação / implementação)
+  const STOP_RE = /^(aprovação|aprovacao|aprovação:|comentarios|comentários|key user)\s*$/i
+  // Linhas de cabeçalho da tabela de implementação (aparecem juntas)
+  const IMPL_TABLE_SKIP = /^(programa|include|método|metodo)\s*$/i
+
+  const cleaned = []
+  for (let i = contentStartIdx; i < lines.length; i++) {
+    const line = lines[i]
+    if (STOP_RE.test(line)) break
+    if (IMPL_TABLE_SKIP.test(line)) continue
+    if (line.length < 3) continue
+    cleaned.push(line)
+  }
+
+  return cleaned.join('\n')
+}
+
 // ─── Prompt builder ───────────────────────────────────────────────────────────
 function buildPrompt({ form, mode, efData, sapVersion, parametros, clientes }) {
   const clienteRow = clientes.find(c =>
@@ -153,18 +198,28 @@ function buildPrompt({ form, mode, efData, sapVersion, parametros, clientes }) {
 
   let p = `== PROJETO ==\n`
   p += `Cliente: ${form.cliente || 'Não informado'}\n`
-  p += `Tipo de Projeto: ${form.tipoProjeto || 'Não informado'}\n`
-  p += `Objeto Principal: ${form.objeto || 'Não informado'}\n`
-  p += `Versão SAP: ${sapVersion || 'ECC 6.0'}\n\n`
+  p += `Versão SAP: ${sapVersion || 'ECC 6.0'}\n`
+
+  if (mode === 'ef') {
+    p += `Tipo de Projeto: A ser identificado a partir da EF\n`
+    p += `Objetos ABAP: A serem identificados a partir da EF\n`
+  } else {
+    p += `Tipo de Projeto: ${form.tipoProjeto || 'Não informado'}\n`
+    p += `Objeto Principal: ${form.objeto || 'Não informado'}\n`
+  }
+  p += `\n`
 
   if (mode === 'ef' && efData?.data) {
     p += `== ESPECIFICAÇÃO FUNCIONAL ==\n`
     p += `Arquivo: ${efData.fileName || 'ef.docx'}\n`
-    if (efData.data.titulo)             p += `Título: ${efData.data.titulo}\n`
-    if (efData.data.descricaoResumida)  p += `Descrição: ${efData.data.descricaoResumida}\n`
-    if (efData.data.visaoGeral)         p += `\nVisão Geral:\n${efData.data.visaoGeral}\n`
-    if (efData.data.especificacaoFuncional)
-      p += `\nEspecificação Funcional Detalhada:\n${efData.data.especificacaoFuncional}\n`
+    p += `INSTRUÇÃO: Identifique os objetos ABAP, tipo de projeto e contexto completo a partir do conteúdo da EF abaixo.\n`
+    if (efData.data.titulo)            p += `Título: ${efData.data.titulo}\n`
+    if (efData.data.descricaoResumida) p += `Descrição: ${efData.data.descricaoResumida}\n`
+
+    // Sempre usa o conteúdo limpo do rawText para garantir cobertura total da EF
+    // (o parser de seções pode não capturar EFs sem numeração 3.1/3.2)
+    const cleaned = cleanEfForPrompt(efData.rawText)
+    if (cleaned) p += `\nConteúdo da Especificação Funcional:\n${cleaned}\n`
   } else {
     p += `== CONTEXTO DO PROJETO ==\n${form.contexto || 'Sem contexto adicional fornecido.'}\n`
   }
@@ -256,7 +311,6 @@ export default function EstimativasView() {
       if (res?.success) {
         setEfData(res)
         if (res.data?.empresa) f('cliente', res.data.empresa)
-        if (res.data?.titulo)  f('objeto', res.data.titulo)
       }
     } finally {
       setEfLoading(false)
@@ -488,50 +542,71 @@ export default function EstimativasView() {
 
           {/* Shared fields */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <Grid cols={3}>
-              <Field label="Cliente">
-                <input
-                  list="cliente-list"
-                  value={form.cliente}
-                  onChange={e => f('cliente', e.target.value)}
-                  placeholder="Nome da empresa"
-                  style={inputStyle}
-                />
-                <datalist id="cliente-list">
-                  {clienteOptions.map(c => <option key={c} value={c} />)}
-                </datalist>
-              </Field>
+            {mode === 'ef' ? (
+              /* EF mode: only Cliente — versão SAP já está no cabeçalho */
+              <Grid cols={1}>
+                <Field label="Cliente">
+                  <input
+                    list="cliente-list"
+                    value={form.cliente}
+                    onChange={e => f('cliente', e.target.value)}
+                    placeholder="Nome da empresa (preenchido automaticamente da EF)"
+                    style={inputStyle}
+                  />
+                  <datalist id="cliente-list">
+                    {clienteOptions.map(c => <option key={c} value={c} />)}
+                  </datalist>
+                </Field>
+              </Grid>
+            ) : (
+              /* Manual mode: todos os campos */
+              <>
+                <Grid cols={3}>
+                  <Field label="Cliente">
+                    <input
+                      list="cliente-list"
+                      value={form.cliente}
+                      onChange={e => f('cliente', e.target.value)}
+                      placeholder="Nome da empresa"
+                      style={inputStyle}
+                    />
+                    <datalist id="cliente-list">
+                      {clienteOptions.map(c => <option key={c} value={c} />)}
+                    </datalist>
+                  </Field>
 
-              <Field label="Tipo de Projeto">
-                {tipoOptions.length > 0 ? (
-                  <select value={form.tipoProjeto} onChange={e => f('tipoProjeto', e.target.value)} style={inputStyle}>
-                    <option value="">Selecione...</option>
-                    {tipoOptions.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                ) : (
-                  <input value={form.tipoProjeto} onChange={e => f('tipoProjeto', e.target.value)} placeholder="Ex: Report, Classe, BAdI..." style={inputStyle} />
-                )}
-              </Field>
+                  <Field label="Tipo de Projeto">
+                    {tipoOptions.length > 0 ? (
+                      <select value={form.tipoProjeto} onChange={e => f('tipoProjeto', e.target.value)} style={inputStyle}>
+                        <option value="">Selecione...</option>
+                        {tipoOptions.map(t => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                    ) : (
+                      <input value={form.tipoProjeto} onChange={e => f('tipoProjeto', e.target.value)} placeholder="Ex: Report, Classe, BAdI..." style={inputStyle} />
+                    )}
+                  </Field>
 
-              <Field label="Objeto Principal">
-                <input
-                  value={form.objeto}
-                  onChange={e => f('objeto', e.target.value)}
-                  placeholder="Ex: ZRFI_RELAT_001"
-                  style={inputStyle}
-                />
-              </Field>
-            </Grid>
+                  <Field label="Objeto Principal">
+                    <input
+                      value={form.objeto}
+                      onChange={e => f('objeto', e.target.value)}
+                      placeholder="Ex: ZRFI_RELAT_001"
+                      style={inputStyle}
+                    />
+                  </Field>
+                </Grid>
 
-            <Field label="Regras e Restrições Adicionais">
-              <textarea
-                value={form.regras}
-                onChange={e => f('regras', e.target.value)}
-                placeholder="Restrições técnicas, prazos, dependências, padrões exigidos pelo cliente..."
-                rows={3}
-                style={{ ...inputStyle, resize: 'vertical', minHeight: 64 }}
-              />
-            </Field>
+                <Field label="Regras e Restrições Adicionais">
+                  <textarea
+                    value={form.regras}
+                    onChange={e => f('regras', e.target.value)}
+                    placeholder="Restrições técnicas, prazos, dependências, padrões exigidos pelo cliente..."
+                    rows={3}
+                    style={{ ...inputStyle, resize: 'vertical', minHeight: 64 }}
+                  />
+                </Field>
+              </>
+            )}
           </div>
 
           {/* Generate button */}
