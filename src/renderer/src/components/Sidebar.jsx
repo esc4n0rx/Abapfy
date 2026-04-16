@@ -6,7 +6,7 @@ const NAV_ITEMS = [
   { id: 'dashboard',    label: 'Dashboard',         icon: '⊞', path: '/dashboard' },
   { id: 'abap',         label: 'ABAP',              icon: '◈', path: '/dashboard/abap' },
   { id: 'historico',    label: 'Histórico',         icon: '🗂', path: '/dashboard/historico' },
-  { id: 'code-review',  label: 'Code Review',       icon: '🔍', path: '/dashboard/code-review' },
+  { id: 'editor',       label: 'Editor',            icon: '✏️', path: '/dashboard/editor' },
   { id: 'performance',  label: 'Performance',       icon: '⚡', path: '/dashboard/performance' },
   { id: 'specs',        label: 'Especificações',    icon: '📋', path: '/dashboard/specs' },
   { id: 'dtec',         label: 'DTec',              icon: '📄', path: '/dashboard/dtec' },

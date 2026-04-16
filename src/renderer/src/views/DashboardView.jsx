@@ -12,6 +12,7 @@ import SettingsView from './SettingsView'
 import AboutView from './AboutView'
 import AbapView from './AbapView'
 import CodeReviewView from './CodeReviewView'
+import EditorView from './EditorView'
 import EspecificacoesView from './EspecificacoesView'
 import AtualizacoesView from './AtualizacoesView'
 import HistoricoView from './HistoricoView'
@@ -55,11 +56,11 @@ function DashboardHome() {
       active: true
     },
     {
-      name: 'Code Review',
-      icon: '🔍',
-      desc: 'Revisão de código ABAP com IA',
+      name: 'Editor',
+      icon: '✏️',
+      desc: 'Edição incremental de programas ABAP com IA',
       color: '#107e3e',
-      path: '/dashboard/code-review',
+      path: '/dashboard/editor',
       count: sessions.length,
       countLabel: sessions.length === 1 ? 'sessão' : 'sessões',
       active: true
@@ -180,10 +181,10 @@ function DashboardHome() {
           color="#107e3e"
         />
         <StatusCard
-          title="Code Reviews"
+          title="Editor SAP"
           value={String(sessions.length)}
           subtitle={sessions.length === 0 ? 'Nenhuma sessão' : sessions.length === 1 ? '1 sessão' : `${sessions.length} sessões`}
-          icon="🔍"
+          icon="✏️"
           color="#107e3e"
         />
         <StatusCard
@@ -289,6 +290,7 @@ export default function DashboardView() {
             <Route path="abap" element={<AbapView />} />
             <Route path="historico" element={<HistoricoView />} />
             <Route path="code-review" element={<CodeReviewView />} />
+            <Route path="editor" element={<EditorView />} />
             <Route path="performance" element={<PerformanceView />} />
             <Route path="specs" element={<EspecificacoesView />} />
             <Route path="dtec" element={<DtecView />} />

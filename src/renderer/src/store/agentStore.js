@@ -9,6 +9,7 @@ const FLOW_MAPPINGS_KEY = 'abapfy_flow_mappings'
 export const FLOW_CONFIGS = [
   { id: 'abap',        label: 'Gerador ABAP',            defaultAgent: 'abaper' },
   { id: 'code_review', label: 'Code Review',              defaultAgent: 'code_review' },
+  { id: 'editor',      label: 'Editor SAP',               defaultAgent: 'editor' },
   { id: 'ef',          label: 'Especificação Funcional',  defaultAgent: 'ef_consultant' },
   { id: 'effort',      label: 'Estimativa de Esforço',    defaultAgent: 'effort_estimator' },
   { id: 'dtec',        label: 'Gerador DTec',             defaultAgent: 'dtec_consultant' },
