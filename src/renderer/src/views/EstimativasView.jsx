@@ -5,6 +5,7 @@ import { useEstimationParametersStore } from '../store/estimationParametersStore
 import { useClienteParametrosStore } from '../store/clienteParametrosStore'
 import { useEstimativasStore } from '../store/estimativasStore'
 import { callAI, getActiveProvider, parseJSONResponse } from '../lib/aiClient'
+import { cleanEfForPrompt } from '../lib/efUtils'
 
 // ─── SAP versions ─────────────────────────────────────────────────────────────
 const SAP_VERSIONS = [
@@ -145,53 +146,8 @@ function EstimativaCard({ tipo, data, accent }) {
   )
 }
 
-// ─── EF content cleaner ───────────────────────────────────────────────────────
-// Remove ruído do rawText (metadados, índice, aprovação) e mantém só o conteúdo funcional.
-// Estratégia: encontra a última ocorrência do heading "Especificação Funcional" ou
-// "Visão Geral" e coleta tudo que vem depois, parando na seção de aprovação.
-function cleanEfForPrompt(rawText) {
-  if (!rawText) return ''
-
-  const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean)
-
-  // Headings que marcam o início do conteúdo funcional real
-  const CONTENT_HEADINGS = new Set([
-    'especificação funcional', 'especificacao funcional',
-    'visão geral', 'visao geral',
-  ])
-
-  // Encontra a última ocorrência de um heading de seção de conteúdo
-  let contentStartIdx = -1
-  for (let i = 0; i < lines.length; i++) {
-    const lower = lines[i].toLowerCase()
-    if (CONTENT_HEADINGS.has(lower)) contentStartIdx = i + 1
-  }
-
-  // Se não encontrou heading, usa heurística: primeiro parágrafo > 60 chars
-  if (contentStartIdx === -1) {
-    contentStartIdx = lines.findIndex(l => l.length > 60)
-    if (contentStartIdx === -1) contentStartIdx = 0
-  }
-
-  // Padrões que sinalizam fim do conteúdo útil (tabela de aprovação / implementação)
-  const STOP_RE = /^(aprovação|aprovacao|aprovação:|comentarios|comentários|key user)\s*$/i
-  // Linhas de cabeçalho da tabela de implementação (aparecem juntas)
-  const IMPL_TABLE_SKIP = /^(programa|include|método|metodo)\s*$/i
-
-  const cleaned = []
-  for (let i = contentStartIdx; i < lines.length; i++) {
-    const line = lines[i]
-    if (STOP_RE.test(line)) break
-    if (IMPL_TABLE_SKIP.test(line)) continue
-    if (line.length < 3) continue
-    cleaned.push(line)
-  }
-
-  return cleaned.join('\n')
-}
-
 // ─── Prompt builder ───────────────────────────────────────────────────────────
-function buildPrompt({ form, mode, efData, sapVersion, parametros, clientes }) {
+function buildPrompt({ form, mode, efData, sapVersion, parametros, clientes, corrections }) {
   const clienteRow = clientes.find(c =>
     c.empresa.trim().toLowerCase() === (form.cliente || '').trim().toLowerCase()
   )
@@ -205,7 +161,7 @@ function buildPrompt({ form, mode, efData, sapVersion, parametros, clientes }) {
     p += `Objetos ABAP: A serem identificados a partir da EF\n`
   } else {
     p += `Tipo de Projeto: ${form.tipoProjeto || 'Não informado'}\n`
-    p += `Objeto Principal: ${form.objeto || 'Não informado'}\n`
+    p += `INSTRUÇÃO: Identifique todos os objetos ABAP envolvidos (Reports, Classes, Funções, BAdIs, Tabelas Z, Interfaces, etc.) a partir do contexto fornecido.\n`
   }
   p += `\n`
 
@@ -218,13 +174,23 @@ function buildPrompt({ form, mode, efData, sapVersion, parametros, clientes }) {
 
     // Sempre usa o conteúdo limpo do rawText para garantir cobertura total da EF
     // (o parser de seções pode não capturar EFs sem numeração 3.1/3.2)
-    const cleaned = cleanEfForPrompt(efData.rawText)
+    const cleaned = cleanEfForPrompt(efData.rawText, efData.formato)
     if (cleaned) p += `\nConteúdo da Especificação Funcional:\n${cleaned}\n`
+    if (efData.formato === 'delta') p += `\nObservação: Esta é uma EF de Delta/Alteração de programa existente.\n`
   } else {
     p += `== CONTEXTO DO PROJETO ==\n${form.contexto || 'Sem contexto adicional fornecido.'}\n`
   }
 
   if (form.regras) p += `\n== REGRAS E RESTRIÇÕES ADICIONAIS ==\n${form.regras}\n`
+
+  if (corrections?.length > 0) {
+    p += `\n== CORREÇÕES DE COMPLEXIDADE PELO USUÁRIO ==\n`
+    p += `O usuário revisou as complexidades de ${corrections.length} objeto(s) após a primeira análise.\n`
+    p += `INSTRUÇÃO: Recalcule APENAS os campos "estimativas", "complexidade_geral" e "notas_gerais" com base nas correções abaixo. NÃO repita a lista de objetos — o campo "objetos_identificados" será ignorado nesta resposta.\n`
+    for (const c of corrections) {
+      p += `- ${c.nome} (${c.tipo}): complexidade alterada de ${c.original} → ${c.corrigida}\n`
+    }
+  }
 
   if (parametros.length > 0) {
     p += `\n== PARÂMETROS DE ESTIMATIVA (horas de referência) ==\n`
@@ -282,12 +248,17 @@ export default function EstimativasView() {
   const [mode, setMode]       = useState('manual')  // 'ef' | 'manual'
   const [efData, setEfData]   = useState(null)
   const [efLoading, setEfLoading] = useState(false)
-  const [form, setForm]       = useState({ cliente: '', tipoProjeto: '', objeto: '', contexto: '', regras: '' })
+  const [form, setForm]       = useState({ cliente: '', tipoProjeto: '', contexto: '', regras: '' })
   const [generating, setGenerating] = useState(false)
   const [genError, setGenError]     = useState(null)
   const [result, setResult]         = useState(null)
   const [saved, setSaved]           = useState(false)
   const [selected, setSelected]     = useState(null)  // id of history item being viewed
+
+  // ── Complexidade editável ──
+  const [editedComplexidades, setEditedComplexidades] = useState({})   // index → nova complexidade
+  const [recalculating, setRecalculating]             = useState(false)
+  const hasEdits = Object.keys(editedComplexidades).length > 0
 
   useEffect(() => {
     loadUserAgents()
@@ -301,16 +272,24 @@ export default function EstimativasView() {
   // Unique client names for autocomplete
   const clienteOptions = [...new Set(clientes.map(c => c.empresa))].sort()
 
+  // Complexidades únicas extraídas dos parâmetros cadastrados
+  const complexidadeOptions = [...new Set(parametros.map(p => p.complexidade))].filter(Boolean)
+
   // Unique tipos for select
   const tipoOptions = [...new Set(parametros.map(p => p.tipo))].filter(Boolean).sort()
 
   const handleLoadEf = async () => {
     setEfLoading(true)
+    setGenError(null)
     try {
       const res = await window.api.readEfDocx()
       if (res?.success) {
         setEfData(res)
         if (res.data?.empresa) f('cliente', res.data.empresa)
+      } else if (res?.docLegacy) {
+        setGenError(res.error)
+      } else if (!res?.canceled && res?.error) {
+        setGenError(`Erro ao carregar EF: ${res.error}`)
       }
     } finally {
       setEfLoading(false)
@@ -323,6 +302,7 @@ export default function EstimativasView() {
     setResult(null)
     setSaved(false)
     setSelected(null)
+    setEditedComplexidades({})
 
     try {
       const active = getActiveProvider(providers)
@@ -346,9 +326,64 @@ export default function EstimativasView() {
     }
   }
 
+  const handleRecalculate = async () => {
+    if (!result || !hasEdits) return
+    setRecalculating(true)
+    setGenError(null)
+    setSaved(false)
+
+    try {
+      const active = getActiveProvider(providers)
+      if (!active) throw new Error('Nenhum provedor de IA configurado.')
+
+      const systemPrompt = getFlowPrompt('effort')
+      if (!systemPrompt) throw new Error('Agente "effort_estimator" não encontrado.')
+
+      // Monta lista de correções (para enviar ao modelo)
+      const corrections = (result.objetos_identificados || [])
+        .map((obj, i) => {
+          const nova = editedComplexidades[i]
+          if (!nova || nova === obj.complexidade) return null
+          return { nome: obj.nome, tipo: obj.tipo, original: obj.complexidade, corrigida: nova }
+        })
+        .filter(Boolean)
+
+      if (corrections.length === 0) { setRecalculating(false); return }
+
+      // Aplica as edições client-side na lista COMPLETA de objetos — independente do que a IA devolver
+      const objetosCorrigidos = (result.objetos_identificados || []).map((obj, i) => ({
+        ...obj,
+        complexidade: editedComplexidades[i] ?? obj.complexidade
+      }))
+
+      const userPrompt = buildPrompt({ form, mode, efData, sapVersion, parametros, clientes, corrections })
+      const images = mode === 'ef' && efData?.images?.length ? efData.images.slice(0, 6) : []
+
+      const rawText = await callAI(active, systemPrompt, userPrompt, images)
+      const parsed  = parseJSONResponse(rawText)
+
+      if (!parsed?.estimativas) throw new Error('Resposta inválida da IA.')
+
+      // Mescla: mantém estrutura original + atualiza só o que a IA recalculou
+      // A lista de objetos SEMPRE vem do client-side (todos preservados com edições aplicadas)
+      setResult({
+        ...result,
+        estimativas:        parsed.estimativas,
+        complexidade_geral: parsed.complexidade_geral ?? result.complexidade_geral,
+        notas_gerais:       parsed.notas_gerais       ?? result.notas_gerais,
+        objetos_identificados: objetosCorrigidos
+      })
+      setEditedComplexidades({})
+    } catch (err) {
+      setGenError(err.message)
+    } finally {
+      setRecalculating(false)
+    }
+  }
+
   const handleSave = async () => {
     if (!result || saved) return
-    const nome = result.projeto || form.objeto || form.contexto?.slice(0, 60) || 'Estimativa'
+    const nome = result.projeto || form.contexto?.slice(0, 60) || 'Estimativa'
     const res = await saveEstimativa({
       nome_projeto: nome,
       cliente:      form.cliente,
@@ -362,11 +397,12 @@ export default function EstimativasView() {
   }
 
   const handleSelectHistory = (item) => {
-    if (selected === item.id) { setSelected(null); setResult(null); return }
+    if (selected === item.id) { setSelected(null); setResult(null); setEditedComplexidades({}); return }
     setSelected(item.id)
     setResult(item.resultado)
     setSaved(true)
     setGenError(null)
+    setEditedComplexidades({})
   }
 
   const handleDeleteHistory = async (id, e) => {
@@ -376,9 +412,9 @@ export default function EstimativasView() {
     if (selected === id) { setSelected(null); setResult(null) }
   }
 
-  const canGenerate = !generating && (
+  const canGenerate = !generating && !recalculating && (
     (mode === 'ef' && efData) ||
-    (mode === 'manual' && (form.contexto?.trim() || form.objeto?.trim()))
+    (mode === 'manual' && form.contexto?.trim())
   )
 
   const accentMap = {
@@ -508,9 +544,20 @@ export default function EstimativasView() {
                   {efLoading ? 'Carregando...' : '📂 Selecionar arquivo .docx'}
                 </button>
                 {efData && (
-                  <span style={{ fontSize: 12, color: 'var(--sap-positive)', fontWeight: 600 }}>
-                    ✓ {efData.fileName}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 12, color: 'var(--sap-positive)', fontWeight: 600 }}>
+                      ✓ {efData.fileName}
+                    </span>
+                    {efData.formato && (
+                      <span style={{
+                        fontSize: 10, padding: '1px 7px', borderRadius: 8, fontWeight: 600,
+                        background: efData.formato === 'delta' ? 'rgba(233,115,12,0.12)' : 'rgba(0,112,242,0.1)',
+                        color: efData.formato === 'delta' ? '#e9730c' : 'var(--sap-primary)'
+                      }}>
+                        {efData.formato === 'delta' ? 'Delta EF' : 'EF Clássica'}
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
               {efData?.data && (
@@ -561,7 +608,7 @@ export default function EstimativasView() {
             ) : (
               /* Manual mode: todos os campos */
               <>
-                <Grid cols={3}>
+                <Grid cols={2}>
                   <Field label="Cliente">
                     <input
                       list="cliente-list"
@@ -584,15 +631,6 @@ export default function EstimativasView() {
                     ) : (
                       <input value={form.tipoProjeto} onChange={e => f('tipoProjeto', e.target.value)} placeholder="Ex: Report, Classe, BAdI..." style={inputStyle} />
                     )}
-                  </Field>
-
-                  <Field label="Objeto Principal">
-                    <input
-                      value={form.objeto}
-                      onChange={e => f('objeto', e.target.value)}
-                      placeholder="Ex: ZRFI_RELAT_001"
-                      style={inputStyle}
-                    />
                   </Field>
                 </Grid>
 
@@ -648,15 +686,17 @@ export default function EstimativasView() {
                 <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--sap-text)' }}>{result.projeto}</div>
                 <div style={{ fontSize: 12, color: 'var(--sap-subtle)', marginTop: 2, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                   {result.versao_sap && <span>SAP: {result.versao_sap}</span>}
-                  {result.complexidade_geral && (
-                    <span style={{
-                      padding: '1px 8px', borderRadius: 8, fontSize: 11, fontWeight: 600,
-                      background: result.complexidade_geral === 'Alta' ? 'rgba(187,0,0,0.1)' : result.complexidade_geral === 'Baixa' ? 'rgba(16,126,62,0.1)' : 'rgba(233,115,12,0.1)',
-                      color: result.complexidade_geral === 'Alta' ? '#bb0000' : result.complexidade_geral === 'Baixa' ? '#107e3e' : '#e9730c'
-                    }}>
-                      Complexidade {result.complexidade_geral}
-                    </span>
-                  )}
+                  {result.complexidade_geral && (() => {
+                    const opts = complexidadeOptions.length > 0 ? complexidadeOptions : ['Baixa', 'Média', 'Alta']
+                    const idx  = opts.indexOf(result.complexidade_geral)
+                    const col  = idx === 0 ? '#107e3e' : idx === opts.length - 1 ? '#bb0000' : '#e9730c'
+                    const bg   = idx === 0 ? 'rgba(16,126,62,0.1)' : idx === opts.length - 1 ? 'rgba(187,0,0,0.1)' : 'rgba(233,115,12,0.1)'
+                    return (
+                      <span style={{ padding: '1px 8px', borderRadius: 8, fontSize: 11, fontWeight: 600, background: bg, color: col }}>
+                        Complexidade {result.complexidade_geral}
+                      </span>
+                    )
+                  })()}
                 </div>
               </div>
               {!saved ? (
@@ -683,10 +723,35 @@ export default function EstimativasView() {
               ))}
             </div>
 
-            {/* Objects identified */}
+            {/* Objects identified — complexidade editável */}
             {result.objetos_identificados?.length > 0 && (
               <div style={{ background: 'var(--sap-base)', border: '1px solid var(--sap-border)', borderRadius: 8, padding: '14px 20px' }}>
-                <div style={{ ...sectionTitle, marginBottom: 12 }}>Objetos Identificados</div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={sectionTitle}>Objetos Identificados</div>
+                    {hasEdits && (
+                      <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 8, background: 'rgba(233,115,12,0.12)', color: '#e9730c', fontWeight: 600 }}>
+                        {Object.keys(editedComplexidades).length} alteração(ões) pendente(s)
+                      </span>
+                    )}
+                  </div>
+                  {hasEdits && (
+                    <button
+                      onClick={handleRecalculate}
+                      disabled={recalculating}
+                      style={{
+                        padding: '6px 16px', fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+                        border: 'none', borderRadius: 4,
+                        background: recalculating ? 'var(--sap-border)' : '#e9730c',
+                        color: recalculating ? 'var(--sap-subtle)' : '#fff',
+                        cursor: recalculating ? 'not-allowed' : 'pointer',
+                        transition: 'background 0.15s'
+                      }}
+                    >
+                      {recalculating ? '⏳ Recalculando...' : '↻ Recalcular com Correções'}
+                    </button>
+                  )}
+                </div>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                     <thead>
@@ -697,20 +762,59 @@ export default function EstimativasView() {
                       </tr>
                     </thead>
                     <tbody>
-                      {result.objetos_identificados.map((obj, i) => (
-                        <tr key={i} style={{ background: i % 2 === 1 ? 'var(--sap-bg)' : 'var(--sap-base)' }}>
-                          <td style={{ padding: '6px 10px', fontFamily: 'monospace', fontSize: 11, borderBottom: '1px solid var(--sap-border)' }}>{obj.nome}</td>
-                          <td style={{ padding: '6px 10px', borderBottom: '1px solid var(--sap-border)' }}>{obj.tipo}</td>
-                          <td style={{ padding: '6px 10px', borderBottom: '1px solid var(--sap-border)' }}>
-                            <span style={{
-                              padding: '1px 7px', borderRadius: 8, fontSize: 10, fontWeight: 600,
-                              background: obj.complexidade === 'Alta' ? 'rgba(187,0,0,0.1)' : obj.complexidade === 'Baixa' ? 'rgba(16,126,62,0.1)' : 'rgba(233,115,12,0.1)',
-                              color: obj.complexidade === 'Alta' ? '#bb0000' : obj.complexidade === 'Baixa' ? '#107e3e' : '#e9730c'
-                            }}>{obj.complexidade}</span>
-                          </td>
-                          <td style={{ padding: '6px 10px', color: 'var(--sap-subtle)', borderBottom: '1px solid var(--sap-border)' }}>{obj.justificativa}</td>
-                        </tr>
-                      ))}
+                      {result.objetos_identificados.map((obj, i) => {
+                        const complexAtual = editedComplexidades[i] ?? obj.complexidade
+                        const foiEditado   = editedComplexidades[i] && editedComplexidades[i] !== obj.complexidade
+                        // Cores baseadas na posição do valor na lista de parâmetros (primeiro=verde, último=vermelho, meio=laranja)
+                        const opts = complexidadeOptions.length > 0 ? complexidadeOptions : ['Baixa', 'Média', 'Alta']
+                        const idxOpt = opts.indexOf(complexAtual)
+                        const palette = idxOpt === 0
+                          ? { color: '#107e3e', bg: 'rgba(16,126,62,0.08)' }
+                          : idxOpt === opts.length - 1
+                            ? { color: '#bb0000', bg: 'rgba(187,0,0,0.08)' }
+                            : { color: '#e9730c', bg: 'rgba(233,115,12,0.08)' }
+                        const complexColor = palette.color
+                        const complexBg    = palette.bg
+                        return (
+                          <tr key={i} style={{ background: i % 2 === 1 ? 'var(--sap-bg)' : 'var(--sap-base)' }}>
+                            <td style={{ padding: '6px 10px', fontFamily: 'monospace', fontSize: 11, borderBottom: '1px solid var(--sap-border)' }}>{obj.nome}</td>
+                            <td style={{ padding: '6px 10px', borderBottom: '1px solid var(--sap-border)' }}>{obj.tipo}</td>
+                            <td style={{ padding: '5px 10px', borderBottom: '1px solid var(--sap-border)' }}>
+                              <select
+                                value={complexAtual}
+                                onChange={e => {
+                                  const val = e.target.value
+                                  setEditedComplexidades(prev => {
+                                    if (val === obj.complexidade) {
+                                      const next = { ...prev }
+                                      delete next[i]
+                                      return next
+                                    }
+                                    return { ...prev, [i]: val }
+                                  })
+                                }}
+                                style={{
+                                  padding: '2px 6px', fontSize: 11, fontWeight: 600,
+                                  border: foiEditado ? `1px solid ${complexColor}` : '1px solid var(--sap-border)',
+                                  borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit',
+                                  background: complexBg, color: complexColor,
+                                  outline: 'none'
+                                }}
+                              >
+                                {(complexidadeOptions.length > 0 ? complexidadeOptions : ['Baixa', 'Média', 'Alta']).map(c => (
+                                  <option key={c} value={c}>{c}</option>
+                                ))}
+                              </select>
+                              {foiEditado && (
+                                <span style={{ marginLeft: 6, fontSize: 10, color: '#e9730c' }}>
+                                  (era {obj.complexidade})
+                                </span>
+                              )}
+                            </td>
+                            <td style={{ padding: '6px 10px', color: 'var(--sap-subtle)', borderBottom: '1px solid var(--sap-border)' }}>{obj.justificativa}</td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>

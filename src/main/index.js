@@ -259,6 +259,130 @@ function buildDocxRelMap(zip) {
   return relMap
 }
 
+// ─── Helper: Detecta formato da EF (classic = seções numeradas / delta = por nome) ──
+function detectEfFormat(paragraphs) {
+  const texts = paragraphs.map(p => p.text.toLowerCase())
+  const hasDelta = texts.some(t =>
+    t.includes('descritivo do delta') ||
+    t.includes('componentes requeridos por tipo')
+  )
+  return hasDelta ? 'delta' : 'classic'
+}
+
+// ─── Helper: Parseia EF no formato Delta (ex: ZTMM145) ───────────────────────
+// Formato utilizado em EFs de alteração/delta, com seções nomeadas em vez de numeradas.
+function parseDeltaEfSections(paragraphs) {
+  const result = {
+    projectName: '',
+    empresa: '',
+    titulo: '',
+    descricaoResumida: '',
+    visaoGeral: '',
+    especificacaoFuncional: '',
+    efImageRIds: [],   // todas as imagens do documento
+    formato: 'delta'
+  }
+
+  const texts = paragraphs.map(p => p.text.trim())
+
+  // ── Extrai metadados da tabela de Identificação ──
+  for (let i = 0; i < texts.length; i++) {
+    const low = texts[i].toLowerCase()
+    const next = texts[i + 1] || ''
+
+    if (low === 'cenário empresarial' || low === 'cenario empresarial') {
+      if (next && !next.match(/^(processo|identificação|identifica)/i)) {
+        result.projectName = next
+        result.titulo = next
+      }
+    } else if (low === 'processo') {
+      if (next && !next.match(/^(identifica)/i)) {
+        result.descricaoResumida = next.slice(0, 300)
+      }
+    }
+
+    // Encerra busca de metadados ao chegar em Responsáveis
+    if (low === 'responsáveis' || low === 'responsaveis') break
+  }
+
+  // ── Define seções por heading nomeado ──
+  const SECTION_HEADINGS = {
+    'descritivo do delta':                           'delta',
+    'fluxo do processo':                             'fluxo',
+    'racional de configuração':                      'racional',
+    'racional de configuracao':                      'racional',
+    'componentes requeridos por tipo de desenvolvimento': 'componentes',
+    'impactos no desenvolvimento':                   'impactos',
+    'tabelas z':                                     'tabelas_z',
+    'volume de dados':                               'volume',
+    'frequência de execução':                        'frequencia',
+    'autorizações':                                  'autorizacoes',
+    'autorizacoes':                                  'autorizacoes',
+    'tratamento de erros':                           'erros',
+    'especificação técnica':                         'spec_tec',
+    'especificacao tecnica':                         'spec_tec',
+  }
+
+  // Seções que marcam fim do conteúdo funcional útil
+  const STOP_HEADINGS = new Set([
+    'sessão 1', 'sessao 1', 'sessão a', 'sessao a', 'sessão b', 'sessao b',
+    'checklist de segurança', 'checklist de seguranca',
+    'code inspector', 'aprovação', 'aprovacao'
+  ])
+
+  const sections = {}      // key → string[]
+  const sectionRIds = {}   // key → string[]
+  let currentKey = null
+
+  for (let i = 0; i < paragraphs.length; i++) {
+    const { text: p, rIds } = paragraphs[i]
+    const low = p.trim().toLowerCase()
+
+    if (STOP_HEADINGS.has(low)) break
+
+    const sectionKey = SECTION_HEADINGS[low]
+    if (sectionKey !== undefined) {
+      currentKey = sectionKey
+      if (!sections[currentKey]) { sections[currentKey] = []; sectionRIds[currentKey] = [] }
+      continue
+    }
+
+    if (currentKey) {
+      if (p.trim()) sections[currentKey].push(p.trim())
+      if (rIds.length) sectionRIds[currentKey].push(...rIds)
+    }
+  }
+
+  // ── Monta campos canônicos ──
+  const deltaLines = [
+    ...(sections.delta        || []),
+    ...(sections.fluxo        || []),
+    ...(sections.racional     || []),
+  ]
+  if (deltaLines.length) result.visaoGeral = deltaLines.join('\n')
+
+  const specLines = [
+    ...(sections.componentes  || []),
+    ...(sections.impactos     || []),
+    ...(sections.tabelas_z    || []),
+  ]
+  if (specLines.length) result.especificacaoFuncional = specLines.join('\n')
+
+  if (!result.descricaoResumida && deltaLines.length) {
+    result.descricaoResumida = deltaLines.slice(0, 4).join(' ').slice(0, 300)
+  }
+
+  // ── Coleta todos os rIds de imagem do documento ──
+  const seen = new Set()
+  for (const { rIds } of paragraphs) {
+    for (const rId of rIds) {
+      if (!seen.has(rId)) { seen.add(rId); result.efImageRIds.push(rId) }
+    }
+  }
+
+  return result
+}
+
 // ─── Helper: Analisa seções da EF a partir dos parágrafos ─────────────────────
 // paragraphs: array de { text: string, rIds: string[] }
 // Retorna dados estruturados + efImageRIds (rIds das imagens de 3.1 e 3.2)
@@ -866,29 +990,49 @@ app.whenReady().then(() => {
     }
   })
 
-  // ─── EF: Abre diálogo, lê e parseia arquivo .docx de Especificação Funcional ─
+  // ─── EF: Abre diálogo, lê e parseia arquivo .docx/.doc de Especificação Funcional ─
   ipcMain.handle('ef-read-docx', async () => {
     try {
       const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
-        title: 'Selecionar Especificação Funcional (.docx)',
-        filters: [{ name: 'Word Document', extensions: ['docx'] }],
+        title: 'Selecionar Especificação Funcional',
+        filters: [
+          { name: 'Word Document', extensions: ['docx', 'doc'] }
+        ],
         properties: ['openFile']
       })
       if (canceled || !filePaths.length) return { success: false, canceled: true }
 
-      const buffer = fs.readFileSync(filePaths[0])
+      const filePath = filePaths[0]
+      const ext = nodePath.extname(filePath).toLowerCase()
+
+      // Formato .doc legado — não suportado para leitura direta
+      if (ext === '.doc') {
+        return {
+          success: false,
+          docLegacy: true,
+          error: 'Arquivo .doc detectado. Abra no Word, vá em "Salvar como" e escolha o formato .docx, depois carregue o arquivo novamente.'
+        }
+      }
+
+      const buffer = fs.readFileSync(filePath)
       const zip = new PizZip(buffer)
       const xmlFile = zip.file('word/document.xml')
       if (!xmlFile) throw new Error('Arquivo DOCX inválido: word/document.xml não encontrado')
 
       const xml = xmlFile.asText()
       const paragraphs = extractDocxParagraphs(xml)
-      const parsed = parseEfSections(paragraphs)
+
+      // Detecta formato e escolhe o parser correto
+      const formato = detectEfFormat(paragraphs)
+      const parsed = formato === 'delta'
+        ? parseDeltaEfSections(paragraphs)
+        : parseEfSections(paragraphs)
 
       // Mapeia rId → nome do arquivo via word/_rels/document.xml.rels
       const relMap = buildDocxRelMap(zip)
 
-      // Extrai apenas imagens PNG/JPG referenciadas nas seções 3.1 e 3.2 (máx 10)
+      // Para formato classic: apenas imagens de 3.1 e 3.2 (máx 10)
+      // Para formato delta: todas as imagens do documento (máx 10)
       const images = []
       const SUPPORTED_EXT = new Set(['.png', '.jpg', '.jpeg'])
       const MAX_IMAGES = 10
@@ -897,22 +1041,23 @@ app.whenReady().then(() => {
         if (images.length >= MAX_IMAGES) break
         const fileName = relMap[rId]
         if (!fileName) continue
-        const ext = nodePath.extname(fileName).toLowerCase()
-        if (!SUPPORTED_EXT.has(ext)) continue
+        const imgExt = nodePath.extname(fileName).toLowerCase()
+        if (!SUPPORTED_EXT.has(imgExt)) continue
         const mediaFile = zip.file(`word/media/${fileName}`)
         if (!mediaFile) continue
         try {
           const base64 = mediaFile.asNodeBuffer().toString('base64')
-          const mimeType = ext === '.png' ? 'image/png' : 'image/jpeg'
+          const mimeType = imgExt === '.png' ? 'image/png' : 'image/jpeg'
           images.push({ name: fileName, base64, mimeType })
         } catch (_) { /* ignora arquivo corrompido */ }
       }
 
-      console.log(`[EF-READ-DOCX] ${paragraphs.length} parágrafos, ${images.length} imagem(ns) das seções 3.1/3.2`)
+      console.log(`[EF-READ-DOCX] formato=${formato}, ${paragraphs.length} parágrafos, ${images.length} imagem(ns)`)
 
       return {
         success: true,
-        fileName: nodePath.basename(filePaths[0]),
+        fileName: nodePath.basename(filePath),
+        formato,
         data: parsed,
         rawText: paragraphs.map(p => p.text).filter(Boolean).join('\n'),
         images
