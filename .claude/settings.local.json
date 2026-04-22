@@ -103,7 +103,10 @@
       "Bash(node -e ':*)",
       "Bash(cat .github/workflows/*.yml)",
       "Bash(gh release:*)",
-      "Bash(python -c ':*)"
+      "Bash(python -c ':*)",
+      "Bash(git tag *)",
+      "Bash(git push *)",
+      "Bash(xargs grep *)"
     ]
   }
 }

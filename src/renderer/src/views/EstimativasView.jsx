@@ -147,7 +147,7 @@ function EstimativaCard({ tipo, data, accent }) {
 }
 
 // ─── Prompt builder ───────────────────────────────────────────────────────────
-function buildPrompt({ form, mode, efData, sapVersion, parametros, clientes, corrections }) {
+function buildPrompt({ form, mode, efData, sapVersion, parametros, clientes, corrections, removedObjects, addedObjects }) {
   const clienteRow = clientes.find(c =>
     c.empresa.trim().toLowerCase() === (form.cliente || '').trim().toLowerCase()
   )
@@ -183,12 +183,28 @@ function buildPrompt({ form, mode, efData, sapVersion, parametros, clientes, cor
 
   if (form.regras) p += `\n== REGRAS E RESTRIÇÕES ADICIONAIS ==\n${form.regras}\n`
 
-  if (corrections?.length > 0) {
-    p += `\n== CORREÇÕES DE COMPLEXIDADE PELO USUÁRIO ==\n`
-    p += `O usuário revisou as complexidades de ${corrections.length} objeto(s) após a primeira análise.\n`
-    p += `INSTRUÇÃO: Recalcule APENAS os campos "estimativas", "complexidade_geral" e "notas_gerais" com base nas correções abaixo. NÃO repita a lista de objetos — o campo "objetos_identificados" será ignorado nesta resposta.\n`
-    for (const c of corrections) {
-      p += `- ${c.nome} (${c.tipo}): complexidade alterada de ${c.original} → ${c.corrigida}\n`
+  const hasAdjustments = corrections?.length > 0 || removedObjects?.length > 0 || addedObjects?.length > 0
+  if (hasAdjustments) {
+    p += `\n== AJUSTES DO USUÁRIO NA LISTA DE OBJETOS ==\n`
+    p += `O usuário ajustou a lista de objetos após a primeira análise.\n`
+    p += `INSTRUÇÃO: Recalcule APENAS os campos "estimativas", "complexidade_geral" e "notas_gerais". O campo "objetos_identificados" será ignorado nesta resposta.\n`
+    if (corrections?.length > 0) {
+      p += `\nComplexidades alteradas:\n`
+      for (const c of corrections) {
+        p += `- ${c.nome} (${c.tipo}): ${c.original} → ${c.corrigida}\n`
+      }
+    }
+    if (removedObjects?.length > 0) {
+      p += `\nObjetos REMOVIDOS da estimativa (não incluir no cálculo):\n`
+      for (const r of removedObjects) {
+        p += `- ${r.nome} (${r.tipo}): ${r.complexidade}\n`
+      }
+    }
+    if (addedObjects?.length > 0) {
+      p += `\nObjetos ADICIONADOS à estimativa (incluir no cálculo):\n`
+      for (const a of addedObjects) {
+        p += `- ${a.nome} (${a.tipo}): Complexidade ${a.complexidade}${a.contexto ? ` — ${a.contexto}` : ''}\n`
+      }
     }
   }
 
@@ -260,6 +276,15 @@ export default function EstimativasView() {
   const [recalculating, setRecalculating]             = useState(false)
   const hasEdits = Object.keys(editedComplexidades).length > 0
 
+  // ── Remover / adicionar objetos ──
+  const [removedIndices, setRemovedIndices] = useState(new Set())
+  const [addedObjects, setAddedObjects]     = useState([])   // [{nome,tipo,complexidade,contexto}]
+  const [showAddForm, setShowAddForm]       = useState(false)
+  const [addForm, setAddForm]               = useState({ nome: '', tipo: '', complexidade: '', contexto: '' })
+
+  const hasPendingChanges = hasEdits || removedIndices.size > 0 || addedObjects.length > 0
+  const totalPending = Object.keys(editedComplexidades).length + removedIndices.size + addedObjects.length
+
   useEffect(() => {
     loadUserAgents()
     loadParametros()
@@ -303,6 +328,10 @@ export default function EstimativasView() {
     setSaved(false)
     setSelected(null)
     setEditedComplexidades({})
+    setRemovedIndices(new Set())
+    setAddedObjects([])
+    setShowAddForm(false)
+    setAddForm({ nome: '', tipo: '', complexidade: '', contexto: '' })
 
     try {
       const active = getActiveProvider(providers)
@@ -327,7 +356,7 @@ export default function EstimativasView() {
   }
 
   const handleRecalculate = async () => {
-    if (!result || !hasEdits) return
+    if (!result || !hasPendingChanges) return
     setRecalculating(true)
     setGenError(null)
     setSaved(false)
@@ -339,24 +368,33 @@ export default function EstimativasView() {
       const systemPrompt = getFlowPrompt('effort')
       if (!systemPrompt) throw new Error('Agente "effort_estimator" não encontrado.')
 
-      // Monta lista de correções (para enviar ao modelo)
+      // Correções de complexidade (excluindo removidos)
       const corrections = (result.objetos_identificados || [])
         .map((obj, i) => {
+          if (removedIndices.has(i)) return null
           const nova = editedComplexidades[i]
           if (!nova || nova === obj.complexidade) return null
           return { nome: obj.nome, tipo: obj.tipo, original: obj.complexidade, corrigida: nova }
         })
         .filter(Boolean)
 
-      if (corrections.length === 0) { setRecalculating(false); return }
+      // Objetos removidos
+      const removedObjects = (result.objetos_identificados || [])
+        .filter((_, i) => removedIndices.has(i))
 
-      // Aplica as edições client-side na lista COMPLETA de objetos — independente do que a IA devolver
-      const objetosCorrigidos = (result.objetos_identificados || []).map((obj, i) => ({
-        ...obj,
-        complexidade: editedComplexidades[i] ?? obj.complexidade
-      }))
+      // Lista final client-side: originais (sem removidos, com edições) + adicionados
+      const objetosCorrigidos = [
+        ...(result.objetos_identificados || [])
+          .map((obj, i) => ({ obj, i }))
+          .filter(({ i }) => !removedIndices.has(i))
+          .map(({ obj, i }) => ({ ...obj, complexidade: editedComplexidades[i] ?? obj.complexidade })),
+        ...addedObjects.map(a => ({
+          nome: a.nome, tipo: a.tipo, complexidade: a.complexidade,
+          justificativa: a.contexto || 'Adicionado pelo usuário'
+        }))
+      ]
 
-      const userPrompt = buildPrompt({ form, mode, efData, sapVersion, parametros, clientes, corrections })
+      const userPrompt = buildPrompt({ form, mode, efData, sapVersion, parametros, clientes, corrections, removedObjects, addedObjects })
       const images = mode === 'ef' && efData?.images?.length ? efData.images.slice(0, 6) : []
 
       const rawText = await callAI(active, systemPrompt, userPrompt, images)
@@ -364,16 +402,18 @@ export default function EstimativasView() {
 
       if (!parsed?.estimativas) throw new Error('Resposta inválida da IA.')
 
-      // Mescla: mantém estrutura original + atualiza só o que a IA recalculou
-      // A lista de objetos SEMPRE vem do client-side (todos preservados com edições aplicadas)
       setResult({
         ...result,
-        estimativas:        parsed.estimativas,
-        complexidade_geral: parsed.complexidade_geral ?? result.complexidade_geral,
-        notas_gerais:       parsed.notas_gerais       ?? result.notas_gerais,
+        estimativas:           parsed.estimativas,
+        complexidade_geral:    parsed.complexidade_geral ?? result.complexidade_geral,
+        notas_gerais:          parsed.notas_gerais       ?? result.notas_gerais,
         objetos_identificados: objetosCorrigidos
       })
       setEditedComplexidades({})
+      setRemovedIndices(new Set())
+      setAddedObjects([])
+      setShowAddForm(false)
+      setAddForm({ nome: '', tipo: '', complexidade: '', contexto: '' })
     } catch (err) {
       setGenError(err.message)
     } finally {
@@ -397,12 +437,20 @@ export default function EstimativasView() {
   }
 
   const handleSelectHistory = (item) => {
-    if (selected === item.id) { setSelected(null); setResult(null); setEditedComplexidades({}); return }
+    if (selected === item.id) {
+      setSelected(null); setResult(null); setEditedComplexidades({})
+      setRemovedIndices(new Set()); setAddedObjects([]); setShowAddForm(false)
+      return
+    }
     setSelected(item.id)
     setResult(item.resultado)
     setSaved(true)
     setGenError(null)
     setEditedComplexidades({})
+    setRemovedIndices(new Set())
+    setAddedObjects([])
+    setShowAddForm(false)
+    setAddForm({ nome: '', tipo: '', complexidade: '', contexto: '' })
   }
 
   const handleDeleteHistory = async (id, e) => {
@@ -723,95 +771,236 @@ export default function EstimativasView() {
               ))}
             </div>
 
-            {/* Objects identified — complexidade editável */}
-            {result.objetos_identificados?.length > 0 && (
+            {/* Objects identified — complexidade editável + remover/adicionar */}
+            {(result.objetos_identificados?.length > 0 || addedObjects.length > 0) && (
               <div style={{ background: 'var(--sap-base)', border: '1px solid var(--sap-border)', borderRadius: 8, padding: '14px 20px' }}>
+                {/* Header */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <div style={sectionTitle}>Objetos Identificados</div>
-                    {hasEdits && (
+                    {hasPendingChanges && (
                       <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 8, background: 'rgba(233,115,12,0.12)', color: '#e9730c', fontWeight: 600 }}>
-                        {Object.keys(editedComplexidades).length} alteração(ões) pendente(s)
+                        {totalPending} alteração(ões) pendente(s)
                       </span>
                     )}
                   </div>
-                  {hasEdits && (
+                  <div style={{ display: 'flex', gap: 8 }}>
                     <button
-                      onClick={handleRecalculate}
-                      disabled={recalculating}
+                      onClick={() => { setShowAddForm(v => !v); setAddForm({ nome: '', tipo: tipoOptions[0] || '', complexidade: (complexidadeOptions.length > 0 ? complexidadeOptions : ['Baixa', 'Média', 'Alta'])[0], contexto: '' }) }}
                       style={{
-                        padding: '6px 16px', fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
-                        border: 'none', borderRadius: 4,
-                        background: recalculating ? 'var(--sap-border)' : '#e9730c',
-                        color: recalculating ? 'var(--sap-subtle)' : '#fff',
-                        cursor: recalculating ? 'not-allowed' : 'pointer',
-                        transition: 'background 0.15s'
+                        padding: '6px 14px', fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+                        border: '1px solid var(--sap-border)', borderRadius: 4,
+                        background: showAddForm ? 'var(--sap-bg)' : 'transparent',
+                        color: 'var(--sap-text)', cursor: 'pointer', transition: 'background 0.15s'
                       }}
                     >
-                      {recalculating ? '⏳ Recalculando...' : '↻ Recalcular com Correções'}
+                      {showAddForm ? '✕ Cancelar' : '＋ Adicionar Objeto'}
                     </button>
-                  )}
+                    {hasPendingChanges && (
+                      <button
+                        onClick={handleRecalculate}
+                        disabled={recalculating}
+                        style={{
+                          padding: '6px 16px', fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+                          border: 'none', borderRadius: 4,
+                          background: recalculating ? 'var(--sap-border)' : '#e9730c',
+                          color: recalculating ? 'var(--sap-subtle)' : '#fff',
+                          cursor: recalculating ? 'not-allowed' : 'pointer',
+                          transition: 'background 0.15s'
+                        }}
+                      >
+                        {recalculating ? '⏳ Recalculando...' : '↻ Recalcular com Alterações'}
+                      </button>
+                    )}
+                  </div>
                 </div>
+
+                {/* Add Object Form */}
+                {showAddForm && (
+                  <div style={{
+                    marginBottom: 14, padding: '12px 14px', borderRadius: 6,
+                    border: '1px dashed var(--sap-primary)', background: 'rgba(0,112,242,0.04)',
+                    display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap'
+                  }}>
+                    <div style={{ flex: '2 1 160px' }}>
+                      <label style={{ ...labelStyle, marginBottom: 3 }}>Objeto</label>
+                      <input
+                        value={addForm.nome}
+                        onChange={e => setAddForm(p => ({ ...p, nome: e.target.value }))}
+                        placeholder="Ex: ZCL_MINHA_CLASSE"
+                        style={{ ...inputStyle, fontSize: 12 }}
+                      />
+                    </div>
+                    <div style={{ flex: '1 1 120px' }}>
+                      <label style={{ ...labelStyle, marginBottom: 3 }}>Tipo</label>
+                      {tipoOptions.length > 0 ? (
+                        <select value={addForm.tipo} onChange={e => setAddForm(p => ({ ...p, tipo: e.target.value }))} style={{ ...inputStyle, fontSize: 12 }}>
+                          {tipoOptions.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                      ) : (
+                        <input value={addForm.tipo} onChange={e => setAddForm(p => ({ ...p, tipo: e.target.value }))} placeholder="Ex: Classe, BAdI..." style={{ ...inputStyle, fontSize: 12 }} />
+                      )}
+                    </div>
+                    <div style={{ flex: '1 1 120px' }}>
+                      <label style={{ ...labelStyle, marginBottom: 3 }}>Complexidade</label>
+                      <select value={addForm.complexidade} onChange={e => setAddForm(p => ({ ...p, complexidade: e.target.value }))} style={{ ...inputStyle, fontSize: 12 }}>
+                        {(complexidadeOptions.length > 0 ? complexidadeOptions : ['Baixa', 'Média', 'Alta']).map(c => (
+                          <option key={c} value={c}>{c}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={{ flex: '3 1 200px' }}>
+                      <label style={{ ...labelStyle, marginBottom: 3 }}>Contexto / Justificativa</label>
+                      <input
+                        value={addForm.contexto}
+                        onChange={e => setAddForm(p => ({ ...p, contexto: e.target.value }))}
+                        placeholder="Descreva o que esse objeto faz..."
+                        style={{ ...inputStyle, fontSize: 12 }}
+                      />
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (!addForm.nome.trim()) return
+                        setAddedObjects(prev => [...prev, { ...addForm, nome: addForm.nome.trim() }])
+                        setShowAddForm(false)
+                        setAddForm({ nome: '', tipo: tipoOptions[0] || '', complexidade: (complexidadeOptions.length > 0 ? complexidadeOptions : ['Baixa', 'Média', 'Alta'])[0], contexto: '' })
+                      }}
+                      style={{
+                        padding: '7px 16px', fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+                        border: 'none', borderRadius: 4, background: 'var(--sap-primary)',
+                        color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap'
+                      }}
+                    >
+                      + Adicionar
+                    </button>
+                  </div>
+                )}
+
+                {/* Table */}
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                     <thead>
                       <tr style={{ background: 'var(--sap-bg)' }}>
-                        {['Objeto', 'Tipo', 'Complexidade', 'Justificativa'].map(h => (
-                          <th key={h} style={{ padding: '6px 10px', textAlign: 'left', fontSize: 10, fontWeight: 600, color: 'var(--sap-subtle)', textTransform: 'uppercase', letterSpacing: '0.3px', borderBottom: '1px solid var(--sap-border)' }}>{h}</th>
+                        {['Objeto', 'Tipo', 'Complexidade', 'Justificativa', ''].map(h => (
+                          <th key={h} style={{ padding: '6px 10px', textAlign: 'left', fontSize: 10, fontWeight: 600, color: 'var(--sap-subtle)', textTransform: 'uppercase', letterSpacing: '0.3px', borderBottom: '1px solid var(--sap-border)', whiteSpace: 'nowrap' }}>{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {result.objetos_identificados.map((obj, i) => {
+                      {/* Existing objects */}
+                      {(result.objetos_identificados || []).map((obj, i) => {
+                        const isRemoved    = removedIndices.has(i)
                         const complexAtual = editedComplexidades[i] ?? obj.complexidade
-                        const foiEditado   = editedComplexidades[i] && editedComplexidades[i] !== obj.complexidade
-                        // Cores baseadas na posição do valor na lista de parâmetros (primeiro=verde, último=vermelho, meio=laranja)
-                        const opts = complexidadeOptions.length > 0 ? complexidadeOptions : ['Baixa', 'Média', 'Alta']
-                        const idxOpt = opts.indexOf(complexAtual)
+                        const foiEditado   = !isRemoved && editedComplexidades[i] && editedComplexidades[i] !== obj.complexidade
+                        const opts         = complexidadeOptions.length > 0 ? complexidadeOptions : ['Baixa', 'Média', 'Alta']
+                        const idxOpt       = opts.indexOf(complexAtual)
+                        const palette      = idxOpt === 0
+                          ? { color: '#107e3e', bg: 'rgba(16,126,62,0.08)' }
+                          : idxOpt === opts.length - 1
+                            ? { color: '#bb0000', bg: 'rgba(187,0,0,0.08)' }
+                            : { color: '#e9730c', bg: 'rgba(233,115,12,0.08)' }
+                        const rowBg = isRemoved
+                          ? 'rgba(187,0,0,0.04)'
+                          : i % 2 === 1 ? 'var(--sap-bg)' : 'var(--sap-base)'
+                        return (
+                          <tr key={i} style={{ background: rowBg, opacity: isRemoved ? 0.5 : 1, transition: 'opacity 0.15s' }}>
+                            <td style={{ padding: '6px 10px', fontFamily: 'monospace', fontSize: 11, borderBottom: '1px solid var(--sap-border)', textDecoration: isRemoved ? 'line-through' : 'none', color: isRemoved ? 'var(--sap-subtle)' : 'inherit' }}>
+                              {obj.nome}
+                            </td>
+                            <td style={{ padding: '6px 10px', borderBottom: '1px solid var(--sap-border)', color: isRemoved ? 'var(--sap-subtle)' : 'inherit' }}>
+                              {obj.tipo}
+                            </td>
+                            <td style={{ padding: '5px 10px', borderBottom: '1px solid var(--sap-border)' }}>
+                              {isRemoved ? (
+                                <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 8, background: 'rgba(187,0,0,0.1)', color: '#bb0000', fontWeight: 600 }}>Removido</span>
+                              ) : (
+                                <>
+                                  <select
+                                    value={complexAtual}
+                                    onChange={e => {
+                                      const val = e.target.value
+                                      setEditedComplexidades(prev => {
+                                        if (val === obj.complexidade) { const next = { ...prev }; delete next[i]; return next }
+                                        return { ...prev, [i]: val }
+                                      })
+                                    }}
+                                    style={{
+                                      padding: '2px 6px', fontSize: 11, fontWeight: 600,
+                                      border: foiEditado ? `1px solid ${palette.color}` : '1px solid var(--sap-border)',
+                                      borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit',
+                                      background: palette.bg, color: palette.color, outline: 'none'
+                                    }}
+                                  >
+                                    {opts.map(c => <option key={c} value={c}>{c}</option>)}
+                                  </select>
+                                  {foiEditado && (
+                                    <span style={{ marginLeft: 6, fontSize: 10, color: '#e9730c' }}>(era {obj.complexidade})</span>
+                                  )}
+                                </>
+                              )}
+                            </td>
+                            <td style={{ padding: '6px 10px', color: 'var(--sap-subtle)', borderBottom: '1px solid var(--sap-border)' }}>
+                              {obj.justificativa}
+                            </td>
+                            <td style={{ padding: '4px 8px', borderBottom: '1px solid var(--sap-border)', textAlign: 'center' }}>
+                              {isRemoved ? (
+                                <button
+                                  onClick={() => setRemovedIndices(prev => { const s = new Set(prev); s.delete(i); return s })}
+                                  title="Restaurar objeto"
+                                  style={{ width: 22, height: 22, border: '1px solid var(--sap-border)', borderRadius: 4, background: 'transparent', cursor: 'pointer', color: 'var(--sap-primary)', fontSize: 13, lineHeight: 1, padding: 0 }}
+                                >↩</button>
+                              ) : (
+                                <button
+                                  onClick={() => setRemovedIndices(prev => new Set([...prev, i]))}
+                                  title="Remover objeto da estimativa"
+                                  style={{ width: 22, height: 22, border: '1px solid var(--sap-border)', borderRadius: 4, background: 'transparent', cursor: 'pointer', color: 'var(--sap-subtle)', fontSize: 15, lineHeight: 1, padding: 0 }}
+                                >×</button>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+
+                      {/* Added objects */}
+                      {addedObjects.map((obj, ai) => {
+                        const opts   = complexidadeOptions.length > 0 ? complexidadeOptions : ['Baixa', 'Média', 'Alta']
+                        const idxOpt = opts.indexOf(obj.complexidade)
                         const palette = idxOpt === 0
                           ? { color: '#107e3e', bg: 'rgba(16,126,62,0.08)' }
                           : idxOpt === opts.length - 1
                             ? { color: '#bb0000', bg: 'rgba(187,0,0,0.08)' }
                             : { color: '#e9730c', bg: 'rgba(233,115,12,0.08)' }
-                        const complexColor = palette.color
-                        const complexBg    = palette.bg
                         return (
-                          <tr key={i} style={{ background: i % 2 === 1 ? 'var(--sap-bg)' : 'var(--sap-base)' }}>
-                            <td style={{ padding: '6px 10px', fontFamily: 'monospace', fontSize: 11, borderBottom: '1px solid var(--sap-border)' }}>{obj.nome}</td>
+                          <tr key={`added-${ai}`} style={{ background: 'rgba(0,112,242,0.04)' }}>
+                            <td style={{ padding: '6px 10px', borderBottom: '1px solid var(--sap-border)' }}>
+                              <span style={{ fontFamily: 'monospace', fontSize: 11 }}>{obj.nome}</span>
+                              <span style={{ marginLeft: 6, fontSize: 9, padding: '1px 5px', borderRadius: 6, background: 'rgba(0,112,242,0.12)', color: 'var(--sap-primary)', fontWeight: 700, verticalAlign: 'middle' }}>NOVO</span>
+                            </td>
                             <td style={{ padding: '6px 10px', borderBottom: '1px solid var(--sap-border)' }}>{obj.tipo}</td>
                             <td style={{ padding: '5px 10px', borderBottom: '1px solid var(--sap-border)' }}>
                               <select
-                                value={complexAtual}
-                                onChange={e => {
-                                  const val = e.target.value
-                                  setEditedComplexidades(prev => {
-                                    if (val === obj.complexidade) {
-                                      const next = { ...prev }
-                                      delete next[i]
-                                      return next
-                                    }
-                                    return { ...prev, [i]: val }
-                                  })
-                                }}
+                                value={obj.complexidade}
+                                onChange={e => setAddedObjects(prev => prev.map((o, idx) => idx === ai ? { ...o, complexidade: e.target.value } : o))}
                                 style={{
                                   padding: '2px 6px', fontSize: 11, fontWeight: 600,
-                                  border: foiEditado ? `1px solid ${complexColor}` : '1px solid var(--sap-border)',
-                                  borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit',
-                                  background: complexBg, color: complexColor,
-                                  outline: 'none'
+                                  border: `1px solid ${palette.color}`, borderRadius: 8,
+                                  cursor: 'pointer', fontFamily: 'inherit',
+                                  background: palette.bg, color: palette.color, outline: 'none'
                                 }}
                               >
-                                {(complexidadeOptions.length > 0 ? complexidadeOptions : ['Baixa', 'Média', 'Alta']).map(c => (
-                                  <option key={c} value={c}>{c}</option>
-                                ))}
+                                {opts.map(c => <option key={c} value={c}>{c}</option>)}
                               </select>
-                              {foiEditado && (
-                                <span style={{ marginLeft: 6, fontSize: 10, color: '#e9730c' }}>
-                                  (era {obj.complexidade})
-                                </span>
-                              )}
                             </td>
-                            <td style={{ padding: '6px 10px', color: 'var(--sap-subtle)', borderBottom: '1px solid var(--sap-border)' }}>{obj.justificativa}</td>
+                            <td style={{ padding: '6px 10px', color: 'var(--sap-subtle)', borderBottom: '1px solid var(--sap-border)' }}>
+                              {obj.contexto || '—'}
+                            </td>
+                            <td style={{ padding: '4px 8px', borderBottom: '1px solid var(--sap-border)', textAlign: 'center' }}>
+                              <button
+                                onClick={() => setAddedObjects(prev => prev.filter((_, idx) => idx !== ai))}
+                                title="Remover objeto adicionado"
+                                style={{ width: 22, height: 22, border: '1px solid var(--sap-border)', borderRadius: 4, background: 'transparent', cursor: 'pointer', color: 'var(--sap-subtle)', fontSize: 15, lineHeight: 1, padding: 0 }}
+                              >×</button>
+                            </td>
                           </tr>
                         )
                       })}
