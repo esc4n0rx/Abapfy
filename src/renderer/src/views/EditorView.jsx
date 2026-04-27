@@ -279,30 +279,70 @@ function MessageBubble({ msg }) {
   )
 }
 
+function parseStreamingSections(text) {
+  const sections = []
+  const re = /(?:={3,}\s*(.+?)\s*={3,}|^#{2,3}\s+(.+))/gm
+  let m
+  while ((m = re.exec(text)) !== null) {
+    const name = (m[1] || m[2]).trim()
+    if (name && !sections.includes(name)) sections.push(name)
+  }
+  return sections
+}
+
 function StreamingBubble({ text }) {
+  const sections = parseStreamingSections(text)
+  const done    = sections.slice(0, -1)
+  const current = sections[sections.length - 1] || null
+
   return (
     <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 20 }}>
       <div style={{
         width: '100%',
-        padding: '16px 18px',
+        padding: '14px 18px',
         borderRadius: '2px 12px 12px 12px',
         background: 'var(--sap-base)',
         border: '1px solid var(--sap-primary, #0070f2)',
         fontSize: 13, lineHeight: 1.5, color: 'var(--sap-text)'
       }}>
-        {text
-          ? <MarkdownRenderer text={text} />
-          : (
-            <span style={{ color: 'var(--sap-subtle)', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+          {/* Seções já concluídas */}
+          {done.map((s, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ color: '#3fb950', fontSize: 13, flexShrink: 0 }}>✓</span>
+              <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--sap-subtle)' }}>{s}</span>
+              <span style={{ fontSize: 11, color: '#3fb950' }}>finalizado</span>
+            </div>
+          ))}
+
+          {/* Seção em andamento ou indicador genérico */}
+          {current ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{
-                display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
-                background: 'var(--sap-primary, #0070f2)',
-                animation: 'editorPulse 1.2s ease-in-out infinite'
+                display: 'inline-block', width: 10, height: 10, borderRadius: '50%',
+                border: '2px solid var(--sap-primary, #0070f2)',
+                borderTopColor: 'transparent',
+                animation: 'editorSpin 0.8s linear infinite', flexShrink: 0
               }} />
-              Editando<span style={{ animation: 'blink 1s step-end infinite' }}>...</span>
-            </span>
-          )
-        }
+              <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--sap-text)', fontWeight: 600 }}>{current}</span>
+              <span style={{ fontSize: 11, color: 'var(--sap-subtle)' }}>
+                trabalhando<span style={{ animation: 'blink 1s step-end infinite' }}>...</span>
+              </span>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--sap-subtle)' }}>
+              <span style={{
+                display: 'inline-block', width: 10, height: 10, borderRadius: '50%',
+                border: '2px solid var(--sap-primary, #0070f2)',
+                borderTopColor: 'transparent',
+                animation: 'editorSpin 0.8s linear infinite', flexShrink: 0
+              }} />
+              <span style={{ fontSize: 13 }}>
+                Editando<span style={{ animation: 'blink 1s step-end infinite' }}>...</span>
+              </span>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -830,20 +870,34 @@ export default function EditorView() {
       if (isFirst) notify('✏️ Editor SAP', session?.name || 'Edição concluída')
     })
 
-    window.api.onStreamError(({ error: err }) => {
+    window.api.onStreamError(async ({ error: err }) => {
+      const partial = streamAccumRef.current
       setStreaming(false)
       setStreamText('')
       streamAccumRef.current = ''
-      setError(`Erro no streaming: ${err}`)
       window.api.removeStreamListeners()
+
+      if (partial.trim()) {
+        await updateMessages(session.id, [
+          ...newMessages,
+          {
+            role: 'assistant',
+            content: partial + '\n\n---\n⚠️ **Resposta interrompida** — limite de tokens ou erro de conexão. Peça para continuar a partir do último ponto.'
+          }
+        ])
+      } else {
+        setError(`Erro no streaming: ${err}`)
+      }
     })
 
+    const maxTokensMap = { claude: 16000, openai: 16384, groq: 8192, gemini: 16384 }
     window.api.streamStart({
       provider:     active.provider,
       apiKey:       active.apiKey,
       model:        active.model,
       systemPrompt: getFlowPrompt('editor'),
-      messages:     apiMessages
+      messages:     apiMessages,
+      maxTokens:    maxTokensMap[active.provider] ?? 8192
     })
   }
 
@@ -1099,7 +1153,7 @@ export default function EditorView() {
 
       <style>{`
         @keyframes blink { 0%, 100% { opacity: 1 } 50% { opacity: 0 } }
-        @keyframes editorPulse { 0%, 100% { opacity: 1; transform: scale(1) } 50% { opacity: 0.4; transform: scale(0.7) } }
+        @keyframes editorSpin { to { transform: rotate(360deg) } }
       `}</style>
     </div>
   )

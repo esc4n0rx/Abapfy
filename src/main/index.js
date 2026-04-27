@@ -760,7 +760,7 @@ app.whenReady().then(() => {
 
   // ─── Streaming AI para chat (Code Review e afins) ───────────────────────────
   // Usa ipcMain.on (não handle) para poder enviar múltiplos chunks de volta
-  ipcMain.on('ai-stream-start', async (event, { provider, apiKey, model, systemPrompt, messages }) => {
+  ipcMain.on('ai-stream-start', async (event, { provider, apiKey, model, systemPrompt, messages, maxTokens }) => {
     const send = (ch, data) => {
       if (!event.sender.isDestroyed()) event.sender.send(ch, data)
     }
@@ -778,7 +778,7 @@ app.whenReady().then(() => {
           },
           body: JSON.stringify({
             model: model || 'claude-sonnet-4-6',
-            max_tokens: 8192,
+            max_tokens: maxTokens || 8192,
             system: systemPrompt,
             messages,
             stream: true
@@ -828,7 +828,7 @@ app.whenReady().then(() => {
           body: JSON.stringify({
             model,
             messages: [{ role: 'system', content: systemPrompt }, ...messages],
-            max_tokens: 8192,
+            max_tokens: maxTokens || 8192,
             temperature: 0.2,
             stream: true
           })
@@ -876,7 +876,7 @@ app.whenReady().then(() => {
                 role: m.role === 'assistant' ? 'model' : 'user',
                 parts: [{ text: m.content }]
               })),
-              generationConfig: { maxOutputTokens: 8192, temperature: 0.2 }
+              generationConfig: { maxOutputTokens: maxTokens || 8192, temperature: 0.2 }
             })
           }
         )
