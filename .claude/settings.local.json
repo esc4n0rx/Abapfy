@@ -106,7 +106,21 @@
       "Bash(python -c ':*)",
       "Bash(git tag *)",
       "Bash(git push *)",
-      "Bash(xargs grep *)"
+      "Bash(xargs grep *)",
+      "Bash(git ls-remote *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(curl -s -H \"Authorization: token $\\(git config --get credential.helper)",
+      "Bash(curl -s https://api.github.com/repos/esc4n0rx/Abapfy/releases?per_page=5)",
+      "Bash(python -c \"import sys,json; r=json.load\\(sys.stdin\\); [print\\(x['tag_name'], x['id'], x.get\\('draft'\\), x.get\\('prerelease'\\)\\) for x in r]\")",
+      "Bash(node -e \"const p = require\\('./package.json'\\); console.log\\(JSON.stringify\\(p.build?.publish || p.build || {}, null, 2\\)\\)\")",
+      "Bash(node *)",
+      "Bash(npm version *)",
+      "WebFetch(domain:github.com)",
+      "Bash(Get-ChildItem *)",
+      "Bash(gh api *)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(dir \"C:\\\\Users\\\\paulo.oliveira\\\\Desktop\\\\Nova pasta \\(4\\)\\\\src\\\\renderer\\\\src\\\\views\")"
     ]
   }
 }

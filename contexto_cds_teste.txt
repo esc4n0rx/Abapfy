@@ -1,0 +1,70 @@
+SOLICITAÇÃO DE DESENVOLVIMENTO ABAP — CDS VIEW
+===============================================
+
+OBJETO: Z_I_PEDIDOS_COMPRA
+TIPO: CDS View
+TIPO DE VIEW: Basic Interface View
+TABELA BASE: EKKO (JOIN com EKPO, LFA1)
+EMPRESA/MANDANTE: 1000
+
+DESCRIÇÃO RESUMIDA:
+CDS View de interface para pedidos de compra, expondo os dados principais
+de cabeçalho e item de PO para consumo por Fiori e relatórios analíticos.
+
+ENTIDADE E CAMPOS NECESSÁRIOS:
+
+Do cabeçalho EKKO:
+  - EBELN   → PurchaseOrder          (chave)
+  - BUKRS   → CompanyCode
+  - EKORG   → PurchasingOrganization
+  - EKGRP   → PurchasingGroup
+  - LIFNR   → Supplier
+  - BEDAT   → PurchaseOrderDate      (tipo DATS)
+  - WAERS   → DocumentCurrency       (tipo CUKY)
+  - BSART   → PurchaseOrderType
+
+Do item EKPO (JOIN em EKKO.EBELN = EKPO.EBELN):
+  - EBELP   → PurchaseOrderItem      (chave)
+  - MATNR   → Material
+  - TXZ01   → PurchaseOrderItemText
+  - MENGE   → OrderQuantity          (tipo QUAN, referência MEINS)
+  - MEINS   → OrderQuantityUnit      (tipo UNIT)
+  - NETPR   → NetPriceAmount         (tipo CURR, referência WAERS)
+  - WERKS   → Plant
+  - LGORT   → StorageLocation
+  - PSTYP   → PurchaseOrderItemCategory
+  - LOEKZ   → DeletionIndicator
+
+Do fornecedor LFA1 (association, não JOIN — para evitar produto cartesiano):
+  - NAME1   → SupplierName
+
+ASSOCIATIONS:
+  - _Supplier: association [0..1] to I_Supplier on _Supplier.Supplier = Supplier
+  - _Material: association [0..1] to I_Material on _Material.Material = Material
+  - _Plant:    association [0..1] to I_Plant    on _Plant.Plant = Plant
+
+ANOTAÇÕES NECESSÁRIAS:
+  @AbapCatalog.viewEnhancementCategory: [#NONE]
+  @AccessControl.authorizationCheck: #CHECK
+  @Metadata.ignorePropagatedAnnotations: true
+  @ObjectModel.usageType.serviceQuality: #C
+  @ObjectModel.usageType.sizeCategory: #XL
+  @ObjectModel.usageType.dataClass: #TRANSACTIONAL
+
+  Para os campos de valor (NetPriceAmount):
+    @Semantics.amount.currencyCode: 'DocumentCurrency'
+
+  Para OrderQuantity:
+    @Semantics.quantity.unitOfMeasure: 'OrderQuantityUnit'
+
+  Para PurchaseOrderDate:
+    @Semantics.businessDate.createdAt: true
+
+CONTEXTO / REGRAS:
+1. A view deve ser filtrável por CompanyCode, PurchasingOrganization e Plant
+2. Não aplicar filtro de DeletionIndicator na view (o consumidor decide)
+3. Expor o campo PSTYP para que o consumidor possa filtrar tipos de item
+4. A chave composta é (PurchaseOrder, PurchaseOrderItem)
+5. Gerar também o DCL (access control) básico usando a área de autorização
+   M_BEST_EKO (EKORG) e M_BEST_WRK (WERKS)
+6. A view deve ser compatível com S/4HANA 2022 (ABAP Release 757)

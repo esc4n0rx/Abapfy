@@ -1,0 +1,58 @@
+SOLICITAÇÃO DE DESENVOLVIMENTO ABAP — REPORT
+============================================
+
+OBJETO: ZREL_PEDIDOS_ABERTOS
+TIPO: Report
+TRANSAÇÃO: ZMM01
+EMPRESA/MANDANTE: 1000
+AUTOR: Paulo Oliveira
+
+DESCRIÇÃO RESUMIDA:
+Relatório para acompanhamento de pedidos de compra abertos por fornecedor,
+com filtro por data de criação e centro, exibindo saldo pendente de entrega.
+
+CONTEXTO / FLUXO DO PROGRAMA:
+O usuário executa a transação ZMM01 e visualiza uma tela de seleção com os
+seguintes campos de entrada:
+  - Organização de compras (EKORG) — obrigatório
+  - Fornecedor (LIFNR) — opcional, permite múltipla seleção
+  - Data de criação do pedido (BEDAT) — intervalo de datas, obrigatório
+  - Centro (WERKS) — opcional, permite múltipla seleção
+  - Tipo de pedido (BSART) — opcional, valor default "NB"
+
+Ao executar (F8), o programa:
+1. Lê os cabeçalhos de pedido da tabela EKKO com os filtros da tela de seleção
+2. Para cada pedido encontrado, lê os itens da tabela EKPO
+3. Para cada item, lê o histórico de pedido (EKBE) para calcular a quantidade
+   já entregue (movimento 101) e a quantidade pendente
+4. Exibe os resultados em um ALV Grid com as seguintes colunas:
+   - Número do pedido (EBELN)
+   - Item (EBELP)
+   - Fornecedor (LIFNR) + nome do fornecedor (LFA1-NAME1)
+   - Material (MATNR) + descrição (MAKT-MAKTX)
+   - Centro (WERKS)
+   - Quantidade pedida (MENGE) com unidade (MEINS)
+   - Quantidade entregue (calculada do EKBE)
+   - Quantidade pendente (MENGE - entregue)
+   - Valor líquido do item (NETPR * quantidade pendente)
+   - Data de entrega prevista (EINDT do EKET — primeira linha)
+   - Status: ABERTO / PARCIAL / ENCERRADO (calculado)
+
+O ALV deve ter:
+  - Subtotal por fornecedor (LIFNR)
+  - Botão personalizado "Detalhe" na toolbar que abre PO Display (ME23N) para
+    o pedido selecionado via CALL TRANSACTION
+  - Exportação para Excel habilitada
+  - Layout variante salvo por usuário (via CL_SALV_TABLE)
+
+REGRAS DE NEGÓCIO:
+1. Considerar apenas pedidos com LOEKZ = '' (não marcados para exclusão) e
+   STATU não igual a 'U' (bloqueado)
+2. Itens com quantidade pendente zero (totalmente entregues) NÃO devem aparecer
+   no resultado — exceto se o usuário marcar o checkbox "Exibir itens encerrados"
+3. Para o cálculo de quantidade entregue, considerar apenas movimentos EKBE-BEWTP
+   = 'E' (Entrada de mercadoria) e EKBE-BWART = '101'
+4. Usar FOR ALL ENTRIES somente após verificar que a tabela interna não está vazia
+5. O nome do fornecedor deve ser buscado da LFA1 em uma única leitura (não dentro do LOOP)
+6. Itens de serviço (PSTYP = '9') devem ser ignorados
+7. O valor exibido deve ser em moeda do pedido (WAERS do EKKO)
