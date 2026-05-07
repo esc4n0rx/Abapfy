@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useThemeStore } from '../store/themeStore'
 import { useAiStore, AI_PROVIDERS } from '../store/aiStore'
+import { useSkillsStore, SKILL_OBJECT_TYPES } from '../store/skillsStore'
 
 // Separa providers em integrações CLI e APIs
 const INTEGRATION_PROVIDER_IDS = Object.entries(AI_PROVIDERS)
@@ -1411,6 +1412,258 @@ function ClienteParametrosSection() {
   )
 }
 
+/* ─── Skills Tab ────────────────────────────────────── */
+
+const CATEGORY_LABELS = {
+  abap: 'ABAP',
+  btp: 'SAP BTP',
+  cap: 'CAP / CDS',
+  ui5: 'UI5 / Fiori',
+  hana: 'HANA',
+  analytics: 'Analytics',
+  '': 'Outros'
+}
+
+function SkillsTab() {
+  const { skills, toggleSkill, enableAll, disableAll, associations, toggleAssociation } = useSkillsStore()
+  const [section, setSection] = useState('skills')   // 'skills' | 'associations'
+  const [search, setSearch] = useState('')
+  const [filterCategory, setFilterCategory] = useState('all')
+
+  const categories = ['all', ...new Set(skills.map(s => s.category || ''))]
+  const activeCount = skills.filter(s => s.enabled).length
+
+  const filtered = skills.filter(s => {
+    const matchSearch = !search ||
+      s.name.toLowerCase().includes(search.toLowerCase()) ||
+      s.description.toLowerCase().includes(search.toLowerCase())
+    const matchCat = filterCategory === 'all' || (s.category || '') === filterCategory
+    return matchSearch && matchCat
+  })
+
+  return (
+    <div style={{ padding: 24, overflowY: 'auto', flex: 1 }}>
+
+      {/* Section switcher */}
+      <div style={{ display: 'flex', gap: 0, marginBottom: 20, borderBottom: '2px solid var(--sap-border)' }}>
+        {[
+          { id: 'skills', label: 'Skills disponíveis' },
+          { id: 'associations', label: 'Associações por Tipo de Objeto' }
+        ].map(s => (
+          <button key={s.id} onClick={() => setSection(s.id)} style={{
+            padding: '8px 18px', fontSize: 13, background: 'none', border: 'none',
+            borderBottom: section === s.id ? '2px solid var(--sap-primary)' : '2px solid transparent',
+            color: section === s.id ? 'var(--sap-primary)' : 'var(--sap-subtle)',
+            cursor: 'pointer', fontFamily: 'inherit',
+            fontWeight: section === s.id ? 600 : 400, marginBottom: -2
+          }}>{s.label}</button>
+        ))}
+      </div>
+
+      {/* ── Skills list ─────────────────────────────────────────────────────── */}
+      {section === 'skills' && (
+        <div className="settings-section">
+          <div className="settings-section-title">Skills SAP</div>
+          <p style={{ fontSize: 13, color: 'var(--sap-subtle)', marginBottom: 16, lineHeight: 1.6 }}>
+            Habilite ou desabilite skills individualmente. Skills desativadas não são usadas em nenhum tipo de objeto,
+            mesmo que estejam associadas. <strong style={{ color: 'var(--sap-text)' }}>{activeCount} de {skills.length} ativas.</strong>
+          </p>
+
+          <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Buscar skill..."
+              style={{
+                padding: '7px 10px', fontSize: 13, border: '1px solid var(--sap-border)',
+                borderRadius: 4, background: 'var(--sap-base)', color: 'var(--sap-text)',
+                outline: 'none', fontFamily: 'inherit', width: 220
+              }}
+            />
+            {categories.map(cat => (
+              <button key={cat} onClick={() => setFilterCategory(cat)} style={{
+                padding: '5px 12px', fontSize: 12, borderRadius: 4, cursor: 'pointer',
+                fontFamily: 'inherit',
+                background: filterCategory === cat ? 'var(--sap-primary)' : 'transparent',
+                color: filterCategory === cat ? '#fff' : 'var(--sap-subtle)',
+                border: `1px solid ${filterCategory === cat ? 'var(--sap-primary)' : 'var(--sap-border)'}`
+              }}>
+                {cat === 'all' ? 'Todas' : (CATEGORY_LABELS[cat] || cat)}
+              </button>
+            ))}
+            <div style={{ flex: 1 }} />
+            <button onClick={enableAll} style={{
+              padding: '5px 14px', fontSize: 12, borderRadius: 4, cursor: 'pointer',
+              background: 'transparent', color: 'var(--sap-positive)',
+              border: '1px solid var(--sap-positive)', fontFamily: 'inherit'
+            }}>Ativar todas</button>
+            <button onClick={disableAll} style={{
+              padding: '5px 14px', fontSize: 12, borderRadius: 4, cursor: 'pointer',
+              background: 'transparent', color: 'var(--sap-subtle)',
+              border: '1px solid var(--sap-border)', fontFamily: 'inherit'
+            }}>Desativar todas</button>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 1, border: '1px solid var(--sap-border)', borderRadius: 6, overflow: 'hidden' }}>
+            {filtered.length === 0 ? (
+              <div style={{ padding: '24px', textAlign: 'center', color: 'var(--sap-subtle)', fontSize: 13 }}>
+                Nenhuma skill encontrada.
+              </div>
+            ) : filtered.map((skill, idx) => (
+              <div key={skill.id} style={{
+                display: 'flex', alignItems: 'flex-start', gap: 14, padding: '14px 16px',
+                background: 'var(--sap-base)',
+                borderBottom: idx < filtered.length - 1 ? '1px solid var(--sap-border)' : 'none',
+                opacity: skill.enabled ? 1 : 0.55, transition: 'opacity 0.2s'
+              }}>
+                <div style={{
+                  width: 36, height: 36, borderRadius: 6, flexShrink: 0,
+                  background: skill.enabled ? 'var(--sap-primary)15' : 'var(--sap-bg)',
+                  border: `1px solid ${skill.enabled ? 'var(--sap-primary)40' : 'var(--sap-border)'}`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 10, fontWeight: 700,
+                  color: skill.enabled ? 'var(--sap-primary)' : 'var(--sap-subtle)',
+                  fontFamily: 'monospace', transition: 'all 0.2s'
+                }}>
+                  {(CATEGORY_LABELS[skill.category || ''] || 'SK').substring(0, 4).toUpperCase()}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--sap-text)' }}>{skill.name}</span>
+                    <span style={{
+                      fontSize: 10, padding: '1px 6px', borderRadius: 8,
+                      background: 'var(--sap-bg)', color: 'var(--sap-subtle)', border: '1px solid var(--sap-border)'
+                    }}>v{skill.version}</span>
+                    {skill.enabled && (
+                      <span style={{
+                        fontSize: 10, padding: '1px 6px', borderRadius: 8, fontWeight: 600,
+                        background: '#eaf6ee', color: 'var(--sap-positive)', border: '1px solid #c3e6cb'
+                      }}>Ativa</span>
+                    )}
+                  </div>
+                  <div style={{
+                    fontSize: 12, color: 'var(--sap-subtle)', lineHeight: 1.5,
+                    display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden'
+                  }}>{skill.description}</div>
+                  {skill.keywords?.length > 0 && (
+                    <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
+                      {skill.keywords.slice(0, 6).map(kw => (
+                        <span key={kw} style={{
+                          fontSize: 10, padding: '1px 6px', borderRadius: 3,
+                          background: 'var(--sap-bg)', color: 'var(--sap-subtle)',
+                          border: '1px solid var(--sap-border)', fontFamily: 'monospace'
+                        }}>{kw}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <Toggle checked={skill.enabled} onChange={() => toggleSkill(skill.id)} />
+              </div>
+            ))}
+          </div>
+          <p style={{ fontSize: 11, color: 'var(--sap-subtle)', marginTop: 10 }}>
+            Skills desativadas aqui são ignoradas em todos os tipos de objeto, mesmo que estejam associadas.
+          </p>
+        </div>
+      )}
+
+      {/* ── Associations ────────────────────────────────────────────────────── */}
+      {section === 'associations' && (
+        <div className="settings-section">
+          <div className="settings-section-title">Associações por Tipo de Objeto</div>
+          <p style={{ fontSize: 13, color: 'var(--sap-subtle)', marginBottom: 20, lineHeight: 1.6 }}>
+            Defina quais skills são injetadas no prompt para cada tipo de objeto ABAP.
+            Apenas as skills <strong>ativas</strong> e <strong>associadas</strong> ao tipo atual são enviadas,
+            evitando consumo desnecessário de tokens.
+          </p>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {SKILL_OBJECT_TYPES.map(objType => {
+              const associated = associations[objType.key] || []
+              return (
+                <div key={objType.key} style={{
+                  border: '1px solid var(--sap-border)', borderRadius: 6, overflow: 'hidden'
+                }}>
+                  {/* Type header */}
+                  <div style={{
+                    padding: '10px 16px',
+                    background: 'var(--sap-bg)',
+                    borderBottom: '1px solid var(--sap-border)',
+                    display: 'flex', alignItems: 'center', gap: 10
+                  }}>
+                    <span style={{
+                      fontSize: 11, fontWeight: 700, color: '#fff',
+                      background: associated.length > 0 ? 'var(--sap-primary)' : 'var(--sap-subtle)',
+                      padding: '2px 8px', borderRadius: 3, fontFamily: 'monospace',
+                      transition: 'background 0.2s'
+                    }}>{objType.key}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--sap-text)' }}>
+                      {objType.label}
+                    </span>
+                    <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--sap-subtle)' }}>
+                      {associated.length > 0
+                        ? `${associated.length} skill${associated.length > 1 ? 's' : ''} associada${associated.length > 1 ? 's' : ''}`
+                        : 'Nenhuma skill associada'
+                      }
+                    </span>
+                  </div>
+
+                  {/* Skills grid */}
+                  <div style={{
+                    padding: '12px 16px',
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                    gap: 8
+                  }}>
+                    {skills.map(skill => {
+                      const isAssoc = associated.includes(skill.id)
+                      const isDisabled = !skill.enabled
+                      return (
+                        <label key={skill.id} style={{
+                          display: 'flex', alignItems: 'flex-start', gap: 8,
+                          padding: '8px 10px', borderRadius: 4, cursor: isDisabled ? 'not-allowed' : 'pointer',
+                          border: `1px solid ${isAssoc ? 'var(--sap-primary)' : 'var(--sap-border)'}`,
+                          background: isAssoc ? 'var(--sap-primary)08' : 'var(--sap-base)',
+                          opacity: isDisabled ? 0.45 : 1,
+                          transition: 'all 0.15s', userSelect: 'none'
+                        }}>
+                          <input
+                            type="checkbox"
+                            checked={isAssoc}
+                            disabled={isDisabled}
+                            onChange={() => !isDisabled && toggleAssociation(objType.key, skill.id)}
+                            style={{ marginTop: 2, accentColor: 'var(--sap-primary)', cursor: isDisabled ? 'not-allowed' : 'pointer', flexShrink: 0 }}
+                          />
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{
+                              fontSize: 12, fontWeight: 600,
+                              color: isAssoc ? 'var(--sap-primary)' : 'var(--sap-text)',
+                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+                            }}>{skill.name}</div>
+                            {isDisabled && (
+                              <div style={{ fontSize: 10, color: 'var(--sap-subtle)', marginTop: 1 }}>
+                                desativada
+                              </div>
+                            )}
+                          </div>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          <p style={{ fontSize: 11, color: 'var(--sap-subtle)', marginTop: 16 }}>
+            Skills marcadas em cinza estão desativadas na aba "Skills disponíveis" e não serão enviadas mesmo se associadas.
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ─── Main ──────────────────────────────────────────── */
 export default function SettingsView() {
   const [tab, setTab] = useState('ui')
@@ -1419,6 +1672,7 @@ export default function SettingsView() {
     { id: 'ui',          label: 'Interface' },
     { id: 'ai',          label: 'Inteligência Artificial' },
     { id: 'agents',      label: 'Agentes' },
+    { id: 'skills',      label: 'Skills' },
     { id: 'calculadora', label: 'Calculadora' },
     { id: 'parametros',  label: 'Parâmetros de Estimativa' },
     { id: 'clientes',    label: 'Parâmetros de Cliente' }
@@ -1442,6 +1696,7 @@ export default function SettingsView() {
         {tab === 'ui'          && <UiTab />}
         {tab === 'ai'          && <AiTab />}
         {tab === 'agents'      && <AgentsTab />}
+        {tab === 'skills'      && <SkillsTab />}
         {tab === 'calculadora' && <CalculadoraTab />}
         {tab === 'parametros'  && <EstimativaTab />}
         {tab === 'clientes'    && <ClienteParametrosTab />}

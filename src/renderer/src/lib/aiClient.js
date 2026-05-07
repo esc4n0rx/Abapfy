@@ -195,12 +195,43 @@ export function cleanCode(str) {
  * Percorre o resultado parseado e limpa os campos de código conhecidos,
  * removendo markdown fences que alguns LLMs inserem dentro do JSON.
  */
+// Maps alternative field names some models use to our expected schema
+function normalizeFile(f) {
+  if (!f || typeof f !== 'object') return f
+  // name: accept path, filename, file_name, object_name
+  if (!f.name) {
+    f.name = f.path || f.filename || f.file_name || f.object_name || 'ZUNKNOWN'
+    // strip directory prefix if present (e.g. "src/Z_VIEW.cds" → "Z_VIEW")
+    f.name = String(f.name).replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, '').toUpperCase()
+  }
+  // type: accept language, object_type, file_type
+  if (!f.type) {
+    const lang = (f.language || f.object_type || f.file_type || '').toUpperCase()
+    // map common language labels to our type codes
+    const langMap = {
+      'ABAP CDS': 'CDS', 'CDS': 'CDS', 'DCL': 'DCL',
+      'ABAP': 'PROG', 'REPORT': 'PROG', 'INCLUDE': 'INCL',
+      'FUNCTION': 'FUNC', 'CLASS': 'CLAS'
+    }
+    f.type = langMap[lang] || 'PROG'
+  }
+  // content: accept code, source, source_code, body
+  if (!f.content) {
+    f.content = f.code || f.source || f.source_code || f.body || ''
+  }
+  return f
+}
+
 function sanitizeResult(parsed) {
   if (!parsed || typeof parsed !== 'object') return parsed
 
-  // AbapView: files[].content
+  // AbapView: files[].content — normalize schema + clean code fences
   if (Array.isArray(parsed.files)) {
-    parsed.files.forEach(f => { if (f.content) f.content = cleanCode(f.content) })
+    parsed.files = parsed.files.map(f => {
+      f = normalizeFile(f)
+      if (f.content) f.content = cleanCode(f.content)
+      return f
+    })
   }
 
   // PerformanceView: issues[].fix_code
@@ -224,20 +255,106 @@ export function parseJSONResponse(rawText) {
   // 1. Remove thinking blocks
   let text = rawText.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '').trim()
 
-  // 2. Extrai de blocos de código ```json ... ``` ou ``` ... ```
+  // 2. Extrai de bloco de código ```json ... ``` ou ``` ... ```
   const codeBlock = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
   if (codeBlock) {
     text = codeBlock[1].trim()
   }
 
-  // 3. Localiza o objeto JSON principal
+  // 3. Localiza o objeto JSON principal — tenta do primeiro { ao último }
   const start = text.indexOf('{')
   const end = text.lastIndexOf('}')
   if (start !== -1 && end !== -1 && end > start) {
     text = text.slice(start, end + 1)
   }
 
-  return sanitizeResult(JSON.parse(text))
+  // 4. Tenta parse direto
+  try {
+    return sanitizeResult(JSON.parse(text))
+  } catch (_) { /* continua para os fallbacks */ }
+
+  // 5. Fallback: newlines reais dentro de strings JSON (problema mais comum com código CDS/ABAP)
+  //    Substitui newlines literais que estão dentro de valores de string por \n escapado
+  try {
+    const fixedNewlines = repairJsonStrings(text)
+    return sanitizeResult(JSON.parse(fixedNewlines))
+  } catch (_) { /* continua */ }
+
+  // 6. Fallback: remove caracteres de controle problemáticos e tenta novamente
+  try {
+    const cleaned = text
+      .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '') // ctrl chars exceto \t \n \r
+      .replace(/\r\n/g, '\\n')
+      .replace(/\r/g, '\\n')
+    const fixedNewlines = repairJsonStrings(cleaned)
+    return sanitizeResult(JSON.parse(fixedNewlines))
+  } catch (_) { /* continua */ }
+
+  // 7. Fallback: modelo retornou código ABAP/CDS puro sem JSON
+  const looksLikeCode = /^(REPORT|PROGRAM|FUNCTION|CLASS|TYPES|DATA|CONSTANTS|@|define\s+view|\*)/im.test(text.trim())
+  if (looksLikeCode) {
+    const nameMatch = text.match(/^(?:REPORT|PROGRAM)\s+(\w+)/im)
+      || text.match(/define\s+view\s+entity\s+(\w+)/im)
+    const name = nameMatch?.[1] || 'ZABAP_PROGRAM'
+    const isCds = /define\s+view/i.test(text)
+    return sanitizeResult({
+      analysis: 'Resposta retornada como código puro — encapsulada automaticamente.',
+      approach: isCds ? 'mixed' : 'fast_code',
+      fast_code_justified: true,
+      alv_approach: 'none',
+      files: [{ name, type: isCds ? 'CDS' : 'PROG', description: 'Gerado automaticamente', parent: null, content: text }],
+      dependencies: [],
+      transport_order_type: 'Workbench',
+      notes: 'O modelo retornou código sem o envelope JSON. Verifique o prompt do agente.'
+    })
+  }
+
+  // 8. Nenhum fallback funcionou — lança erro descritivo
+  throw new Error(`Resposta do modelo não é JSON válido. Início: "${text.slice(0, 120)}"`)
+}
+
+/**
+ * Repara newlines literais dentro de valores de string JSON.
+ * O modelo às vezes escreve o content com quebras de linha reais em vez de \n,
+ * o que quebra o JSON.parse. Esta função percorre o texto caractere a caractere
+ * e substitui \n e \r literais que estão dentro de strings por \\n / \\r.
+ */
+function repairJsonStrings(text) {
+  let result = ''
+  let inString = false
+  let escaped = false
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+
+    if (escaped) {
+      result += ch
+      escaped = false
+      continue
+    }
+
+    if (ch === '\\' && inString) {
+      result += ch
+      escaped = true
+      continue
+    }
+
+    if (ch === '"') {
+      inString = !inString
+      result += ch
+      continue
+    }
+
+    if (inString) {
+      if (ch === '\n') { result += '\\n'; continue }
+      if (ch === '\r') { result += '\\r'; continue }
+      if (ch === '\t') { result += '\\t'; continue }
+    }
+
+    result += ch
+  }
+
+  return result
 }
 
 /**
@@ -274,6 +391,9 @@ export function getActiveProvider(providers) {
  * Constrói o prompt do usuário a partir do formulário de criação ABAP.
  */
 export function buildAbapPrompt(form, sapVersion) {
+  // CDS view has its own dedicated prompt builder
+  if (form.type === 'CDS') return buildCdsPrompt(form, sapVersion)
+
   const typeNames = {
     REPORT: 'REPORT — Relatório com tela de seleção (ALV ou lista)',
     FUNC: 'FUNCTION MODULE — Módulo de função reutilizável',
@@ -382,5 +502,58 @@ export function buildAbapPrompt(form, sapVersion) {
     p += '\n'
   }
 
+  return p
+}
+
+export function buildCdsPrompt(form, sapVersion) {
+  const viewTypeLabels = {
+    basic: 'Basic Interface View',
+    composite: 'Composite Interface View',
+    consumption: 'Consumption View (Fiori)',
+    transactional: 'Transactional View (RAP)'
+  }
+  const annotationLabels = {
+    analytics: 'Analytics (@Analytics.dataCategory, @Analytics.query)',
+    fiori: 'Fiori (@UI.lineItem, @UI.selectionField, @UI.headerInfo)',
+    search: 'Search Help (@Search.searchable, @Search.defaultSearchElement)',
+    none: 'Sem anotações (apenas estrutura básica)'
+  }
+
+  let p = `GERAR CDS VIEW ABAP\n\n`
+  p += `Versão SAP do ambiente: ${sapVersion || 'S/4HANA 2022'}\n`
+  p += `Nome da View: ${form.name || 'Z_I_XXXX'}\n`
+  if (form.description) p += `Descrição: ${form.description}\n`
+  p += `Tipo de View: ${viewTypeLabels[form.cds_view_type] || form.cds_view_type}\n`
+  p += `Tabela/Entidade base: ${form.cds_base_entity || '(não informada)'}\n`
+  p += `Anotações: ${annotationLabels[form.cds_annotation_preset] || form.cds_annotation_preset}\n\n`
+
+  const fields = (form.cds_fields || []).filter(f => f.field)
+  if (fields.length) {
+    p += `CAMPOS:\n`
+    fields.forEach(f => {
+      p += `  ${f.field}${f.alias ? ` as ${f.alias}` : ''}${f.type ? ` (${f.type})` : ''}`
+      if (f.annotation) p += ` -- ${f.annotation}`
+      p += '\n'
+    })
+    p += '\n'
+  }
+
+  const assocs = (form.cds_associations || []).filter(a => a.name && a.target)
+  if (assocs.length) {
+    p += `ASSOCIATIONS:\n`
+    assocs.forEach(a => {
+      p += `  association ${a.cardinality || '[0..1]'} to ${a.target} as ${a.name}`
+      if (a.join) p += ` on ${a.join}`
+      p += '\n'
+    })
+    p += '\n'
+  }
+
+  if (form.context?.trim()) {
+    p += `CONTEXTO / REGRAS DE NEGÓCIO:\n${form.context.trim()}\n\n`
+  }
+
+  p += `Gere a CDS view completa incluindo: define view entity, campo-chave, todas as anotações necessárias para o tipo solicitado, e o DCL (access control) básico.\n`
+  p += `O formato de resposta deve ser o JSON padrão com files[] contendo os arquivos .cds e .dcl separados.`
   return p
 }

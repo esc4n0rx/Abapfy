@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import AbapHighlight from '../components/AbapHighlight'
 import { useAbapStore } from '../store/abapStore'
 import { useAiStore } from '../store/aiStore'
@@ -6,6 +6,7 @@ import { useAuthStore } from '../store/authStore'
 import { callAI, parseJSONResponse, getActiveProvider, buildAbapPrompt, cleanCode } from '../lib/aiClient'
 import { notify } from '../lib/notify'
 import { useAgentStore } from '../store/agentStore'
+import { useSkillsStore } from '../store/skillsStore'
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -14,17 +15,19 @@ const TYPES = [
   { key: 'FUNC', label: 'Function Module', desc: 'Módulo de função reutilizável com interface definida' },
   { key: 'CLAS', label: 'Classe ABAP', desc: 'Classe orientada a objetos (OOP)' },
   { key: 'ENHO', label: 'Enhancement', desc: 'Ampliação de programa SAP (BAdI / Enhancement Spot)' },
-  { key: 'PROG', label: 'Programa', desc: 'Programa simples sem tela de seleção padrão' }
+  { key: 'PROG', label: 'Programa', desc: 'Programa simples sem tela de seleção padrão' },
+  { key: 'CDS', label: 'CDS View', desc: 'Core Data Services — view de dados com anotações SAP' }
 ]
 
-const TYPE_COLORS = { REPORT: '#0070f2', FUNC: '#107e3e', CLAS: '#8b5cf6', ENHO: '#e9730c', PROG: '#6a6d70' }
+const TYPE_COLORS = { REPORT: '#0070f2', FUNC: '#107e3e', CLAS: '#8b5cf6', ENHO: '#e9730c', PROG: '#6a6d70', CDS: '#00627a' }
 
 const STEPS_BY_TYPE = {
   REPORT: ['Identificação', 'Contexto', 'Regras de Negócio', 'Tabelas', 'Gerar'],
   FUNC:   ['Identificação', 'Interface', 'Contexto', 'Regras de Negócio', 'Gerar'],
   CLAS:   ['Identificação', 'Atributos e Métodos', 'Contexto', 'Gerar'],
   ENHO:   ['Identificação', 'Contexto', 'Regras de Negócio', 'Gerar'],
-  PROG:   ['Identificação', 'Contexto', 'Regras de Negócio', 'Tabelas', 'Gerar']
+  PROG:   ['Identificação', 'Contexto', 'Regras de Negócio', 'Tabelas', 'Gerar'],
+  CDS:    ['Identificação', 'Entidade e Campos', 'Contexto', 'Gerar']
 }
 
 // ─── Styles ────────────────────────────────────────────────────────────────────
@@ -157,7 +160,7 @@ function StepIdentification({ form, update, user }) {
       <Row cols="1fr 1fr">
         <Field label="Nome do Objeto *">
           <input value={form.name || ''} onChange={e => update('name', e.target.value.toUpperCase())}
-            placeholder={form.type === 'FUNC' ? 'ZFM_XXXX' : form.type === 'CLAS' ? 'ZCL_XXXX' : 'ZREPORT_XXXX'}
+            placeholder={form.type === 'FUNC' ? 'ZFM_XXXX' : form.type === 'CLAS' ? 'ZCL_XXXX' : form.type === 'CDS' ? 'Z_I_XXXX' : 'ZREPORT_XXXX'}
             style={inputStyle} />
         </Field>
         {form.type === 'REPORT' && (
@@ -446,6 +449,186 @@ function StepClassOO({ form, update }) {
   )
 }
 
+function StepCdsEntity({ form, update }) {
+  const fields = form.cds_fields || []
+  const assocs = form.cds_associations || []
+  const fieldCols = [
+    { key: 'field', label: 'Campo', placeholder: 'MATNR', width: '150px', upper: true },
+    { key: 'alias', label: 'Alias (opcional)', placeholder: 'MaterialNumber', width: '160px' },
+    { key: 'type', label: 'Tipo/Domínio', placeholder: 'MATNR', width: '130px', upper: true },
+    { key: 'annotation', label: 'Annotation', placeholder: '@Search.defaultSearchElement: true', width: '1fr' }
+  ]
+  const assocCols = [
+    { key: 'name', label: 'Nome', placeholder: '_Material', width: '160px' },
+    { key: 'target', label: 'Target View', placeholder: 'I_Material', width: '160px', upper: true },
+    {
+      key: 'cardinality', label: 'Cardinalidade', type: 'select', width: '110px',
+      options: ['[0..1]', '[1..1]', '[0..*]', '[1..*]']
+    },
+    { key: 'join', label: 'ON Condition', placeholder: '_Material.Matnr = Matnr', width: '1fr' }
+  ]
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div>
+        <label style={labelStyle}>Tabela / Entidade Base *</label>
+        <input
+          value={form.cds_base_entity || ''}
+          onChange={e => update('cds_base_entity', e.target.value.toUpperCase())}
+          placeholder="MARA, I_Material, Z_CUSTOM_TABLE"
+          style={inputStyle}
+        />
+        <div style={{ fontSize: 11, color: 'var(--sap-subtle)', marginTop: 4 }}>
+          Tabela transparente SAP ou CDS view existente que será usada como base
+        </div>
+      </div>
+
+      <Row cols="1fr 1fr">
+        <div style={fieldStyle}>
+          <label style={labelStyle}>Tipo de View</label>
+          <select value={form.cds_view_type || 'basic'} onChange={e => update('cds_view_type', e.target.value)} style={inputStyle}>
+            <option value="basic">Basic Interface View</option>
+            <option value="composite">Composite Interface View</option>
+            <option value="consumption">Consumption View (Fiori)</option>
+            <option value="transactional">Transactional View (RAP)</option>
+          </select>
+        </div>
+        <div style={fieldStyle}>
+          <label style={labelStyle}>Anotações principais</label>
+          <select value={form.cds_annotation_preset || 'analytics'} onChange={e => update('cds_annotation_preset', e.target.value)} style={inputStyle}>
+            <option value="analytics">Analytics (@Analytics.dataCategory)</option>
+            <option value="fiori">Fiori (@UI.lineItem, @UI.selectionField)</option>
+            <option value="search">Search Help (@Search.searchable)</option>
+            <option value="none">Sem anotações (só estrutura)</option>
+          </select>
+        </div>
+      </Row>
+
+      <div>
+        <label style={labelStyle}>Campos da View</label>
+        <GridTable
+          columns={fieldCols}
+          rows={fields}
+          onAdd={() => update('cds_fields', [...fields, { field: '', alias: '', type: '', annotation: '' }])}
+          onUpdate={(i, k, v) => update('cds_fields', fields.map((r, idx) => idx === i ? { ...r, [k]: v } : r))}
+          onRemove={(i) => update('cds_fields', fields.filter((_, idx) => idx !== i))}
+          addLabel="+ Campo"
+        />
+      </div>
+
+      <div>
+        <label style={labelStyle}>Associations (opcional)</label>
+        <GridTable
+          columns={assocCols}
+          rows={assocs}
+          onAdd={() => update('cds_associations', [...assocs, { name: '', target: '', cardinality: '[0..1]', join: '' }])}
+          onUpdate={(i, k, v) => update('cds_associations', assocs.map((r, idx) => idx === i ? { ...r, [k]: v } : r))}
+          onRemove={(i) => update('cds_associations', assocs.filter((_, idx) => idx !== i))}
+          addLabel="+ Association"
+        />
+      </div>
+    </div>
+  )
+}
+
+// ─── Generating Animation (Editor-style) ───────────────────────────────────────
+
+const GEN_STAGES_NORMAL = [
+  'Preparando contexto ABAP...',
+  'Analisando requisitos e regras de negócio...',
+  'Gerando estrutura do programa...',
+  'Escrevendo código e includes...',
+  'Aplicando boas práticas SAP...',
+  'Finalizando objetos ABAP...'
+]
+const GEN_STAGES_EF = [
+  'Lendo especificação funcional...',
+  'Extraindo requisitos da EF...',
+  'Definindo tipo de objeto ABAP...',
+  'Gerando código baseado na EF...',
+  'Aplicando regras Fast Code...',
+  'Finalizando código ABAP...'
+]
+const GEN_STAGES_CDS = [
+  'Preparando estrutura CDS...',
+  'Definindo entidade e campos...',
+  'Gerando anotações SAP...',
+  'Escrevendo DCL e access control...',
+  'Validando associations...',
+  'Finalizando CDS view...'
+]
+
+function GeneratingAnimation({ type = 'normal' }) {
+  const messages = type === 'ef' ? GEN_STAGES_EF : type === 'cds' ? GEN_STAGES_CDS : GEN_STAGES_NORMAL
+  const [stage, setStage] = useState(0)
+  const [dots, setDots] = useState(0)
+  const [lines] = useState(() =>
+    Array.from({ length: 6 }, (_, i) => ({
+      width: 40 + Math.floor(Math.random() * 50),
+      delay: i * 0.12
+    }))
+  )
+
+  useEffect(() => {
+    const t = setInterval(() => setStage(s => (s + 1) % messages.length), 2200)
+    return () => clearInterval(t)
+  }, [messages.length])
+
+  useEffect(() => {
+    const t = setInterval(() => setDots(d => (d + 1) % 4), 500)
+    return () => clearInterval(t)
+  }, [])
+
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24,
+      padding: '32px 20px'
+    }}>
+      {/* Animated code lines */}
+      <div style={{
+        width: '100%', maxWidth: 420, padding: '16px 20px',
+        background: 'var(--sap-bg)', border: '1px solid var(--sap-border)',
+        borderRadius: 6, fontFamily: 'monospace'
+      }}>
+        {lines.map((l, i) => (
+          <div key={i} style={{
+            height: 10, borderRadius: 4, marginBottom: 8,
+            background: `linear-gradient(90deg, var(--sap-primary) ${l.width}%, var(--sap-border) ${l.width}%)`,
+            opacity: 0.5 + (stage % lines.length === i ? 0.5 : 0),
+            transition: 'opacity 0.4s ease',
+            animation: `abapPulse 1.8s ease-in-out ${l.delay}s infinite`
+          }} />
+        ))}
+      </div>
+
+      {/* Stage message */}
+      <div style={{ textAlign: 'center' }}>
+        <div style={{
+          fontSize: 14, fontWeight: 600, color: 'var(--sap-primary)',
+          marginBottom: 6, minHeight: 20,
+          transition: 'opacity 0.3s'
+        }}>
+          {messages[stage]}{'.'.repeat(dots)}
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--sap-subtle)' }}>
+          Isso pode levar alguns instantes
+        </div>
+      </div>
+
+      {/* Progress dots */}
+      <div style={{ display: 'flex', gap: 6 }}>
+        {messages.map((_, i) => (
+          <div key={i} style={{
+            width: i === stage ? 20 : 8, height: 8, borderRadius: 4,
+            background: i === stage ? 'var(--sap-primary)' : 'var(--sap-border)',
+            transition: 'all 0.3s ease'
+          }} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function SapVersionBadge({ sapVersion }) {
   const [showTip, setShowTip] = React.useState(false)
   const v = sapVersion || 'ECC 6.0'
@@ -575,14 +758,7 @@ function StepGenerate({ form, providers, generating, genError, genResult, genSav
         {generating ? 'Gerando código...' : 'Gerar Código'}
       </button>
 
-      {generating && (
-        <div style={{ fontSize: 13, color: 'var(--sap-subtle)' }}>
-          {active?.isIntegration
-            ? 'Aguarde — o agente CLI está gerando o código. Isso pode levar 1-2 minutos...'
-            : 'Aguarde enquanto o código é gerado. Isso pode levar alguns instantes...'
-          }
-        </div>
-      )}
+      {generating && <GeneratingAnimation type={form.type === 'CDS' ? 'cds' : 'normal'} />}
     </div>
   )
 }
@@ -966,16 +1142,17 @@ function EfUploadStep({ onLoaded }) {
   )
 }
 
-function EfReviewStep({ efData, setEfData, providers, generating, genError, genResult, genSavedPath, onGenerate }) {
-  const active = getActiveProvider(providers)
+function EfFileCard({ ef, idx, onRemove, onUpdate }) {
   const [addingFiles, setAddingFiles] = useState(false)
+  const [expanded, setExpanded] = useState(idx === 0)
+  const { data = {}, fileName = '' } = ef
 
   const handleAddPrograms = async () => {
     setAddingFiles(true)
     try {
       const res = await window.api.pickAbapFiles()
       if (res.canceled || !res.success) return
-      setEfData(prev => ({
+      onUpdate(prev => ({
         ...prev,
         attachedPrograms: [...(prev.attachedPrograms || []), ...res.files]
       }))
@@ -984,14 +1161,109 @@ function EfReviewStep({ efData, setEfData, providers, generating, genError, genR
     }
   }
 
-  const removeProgram = (idx) => {
-    setEfData(prev => ({
-      ...prev,
-      attachedPrograms: (prev.attachedPrograms || []).filter((_, i) => i !== idx)
-    }))
+  return (
+    <div style={{
+      border: '1px solid var(--sap-border)', borderRadius: 6, overflow: 'hidden', marginBottom: 10
+    }}>
+      {/* Header */}
+      <div
+        onClick={() => setExpanded(e => !e)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '9px 14px',
+          background: 'var(--sap-bg)', cursor: 'pointer',
+          borderBottom: expanded ? '1px solid var(--sap-border)' : 'none'
+        }}
+      >
+        <span style={{
+          width: 18, height: 18, borderRadius: '50%', background: '#107e3e',
+          color: '#fff', fontSize: 10, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+        }}>✓</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--sap-text)', flex: 1 }}>
+          {fileName}
+        </span>
+        {ef.images?.length > 0 && (
+          <span style={{
+            fontSize: 10, fontWeight: 600, background: '#0070f2', color: '#fff',
+            padding: '1px 6px', borderRadius: 8
+          }}>{ef.images.length} img</span>
+        )}
+        <span style={{ fontSize: 12, color: 'var(--sap-subtle)', marginLeft: 4 }}>
+          {expanded ? '▲' : '▼'}
+        </span>
+        <button
+          onClick={(e) => { e.stopPropagation(); onRemove() }}
+          style={{ ...removeBtnStyle, marginLeft: 4 }}
+        >×</button>
+      </div>
+
+      {expanded && (
+        <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <Field label="Nome do Projeto">
+              <input value={data.projectName || ''} onChange={e => onUpdate(p => ({ ...p, data: { ...p.data, projectName: e.target.value } }))} style={inputStyle} />
+            </Field>
+            <Field label="Empresa / Mandante">
+              <input value={data.empresa || ''} onChange={e => onUpdate(p => ({ ...p, data: { ...p.data, empresa: e.target.value } }))} style={inputStyle} />
+            </Field>
+          </div>
+          <Field label="Título">
+            <input value={data.titulo || ''} onChange={e => onUpdate(p => ({ ...p, data: { ...p.data, titulo: e.target.value } }))} style={inputStyle} />
+          </Field>
+          {data.visaoGeral && (
+            <Field label="Visão Geral (3.1)">
+              <textarea value={data.visaoGeral} onChange={e => onUpdate(p => ({ ...p, data: { ...p.data, visaoGeral: e.target.value } }))} rows={3} style={textareaStyle} />
+            </Field>
+          )}
+          {data.especificacaoFuncional && (
+            <Field label="Especificação (3.2)">
+              <textarea value={data.especificacaoFuncional} onChange={e => onUpdate(p => ({ ...p, data: { ...p.data, especificacaoFuncional: e.target.value } }))} rows={4} style={textareaStyle} />
+            </Field>
+          )}
+
+          {/* Programas anexados */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <label style={labelStyle}>Programas Existentes (opcional)</label>
+              <button onClick={handleAddPrograms} disabled={addingFiles} style={addBtnStyle}>
+                {addingFiles ? 'Aguarde...' : '+ Adicionar .abap'}
+              </button>
+            </div>
+            {(ef.attachedPrograms || []).length === 0 ? (
+              <div style={{ fontSize: 12, color: 'var(--sap-subtle)', fontStyle: 'italic' }}>Nenhum programa anexado</div>
+            ) : (ef.attachedPrograms || []).map((prog, i) => (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'center', gap: 8, padding: '5px 10px',
+                background: 'var(--sap-base)', border: '1px solid var(--sap-border)', borderRadius: 4, marginBottom: 4
+              }}>
+                <span style={{ fontSize: 11, color: 'var(--sap-primary)', fontFamily: 'monospace', flex: 1 }}>{prog.name}</span>
+                <span style={{ fontSize: 11, color: 'var(--sap-subtle)' }}>{(prog.content?.length || 0).toLocaleString()} chars</span>
+                <button onClick={() => onUpdate(p => ({ ...p, attachedPrograms: (p.attachedPrograms || []).filter((_, j) => j !== i) }))} style={removeBtnStyle}>×</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function EfReviewStep({ efFiles, onAddFile, onRemoveFile, onUpdateFile, providers, generating, genError, genResult, genSavedPath, onGenerate }) {
+  const active = getActiveProvider(providers)
+  const [loadingMore, setLoadingMore] = useState(false)
+
+  const handleAddMoreEf = async () => {
+    setLoadingMore(true)
+    try {
+      const res = await window.api.readEfDocx()
+      if (res.canceled || !res.success) return
+      onAddFile(res)
+    } finally {
+      setLoadingMore(false)
+    }
   }
 
   if (genResult) {
+    const primaryName = efFiles[0]?.data?.projectName || 'ABAP'
     return (
       <>
         <div style={{
@@ -1003,124 +1275,33 @@ function EfReviewStep({ efData, setEfData, providers, generating, genError, genR
             width: 16, height: 16, borderRadius: '50%', background: '#107e3e',
             color: '#fff', fontSize: 10, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
           }}>✓</span>
-          Código gerado e salvo automaticamente na sua conta.
+          Código gerado e salvo automaticamente.
           {genSavedPath && <span style={{ color: 'var(--sap-subtle)' }}>Arquivos locais: <strong>{genSavedPath}</strong></span>}
         </div>
-        <ResultContent result={genResult} programName={efData.data?.projectName || 'ABAP'} providers={providers} />
+        <ResultContent result={genResult} programName={primaryName} providers={providers} />
       </>
     )
   }
 
-  const { data = {}, fileName = '' } = efData
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* Arquivo carregado */}
-      <div style={{
-        padding: '10px 14px', background: '#f3faf5',
-        border: '1px solid #c3e6cb', borderRadius: 4,
-        fontSize: 13, color: '#107e3e', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap'
-      }}>
-        <span>✓</span>
-        <span><strong>{fileName}</strong> carregado com sucesso</span>
-        {(efData.images?.length > 0) && (
-          <span style={{
-            marginLeft: 'auto', fontSize: 11, fontWeight: 600,
-            background: '#0070f2', color: '#fff',
-            padding: '2px 8px', borderRadius: 10
-          }}>
-            {efData.images.length} imagem{efData.images.length > 1 ? 'ns' : ''} extraída{efData.images.length > 1 ? 's' : ''}
-          </span>
-        )}
-        {(efData.images?.length === 0) && (
-          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--sap-subtle)' }}>
-            sem imagens PNG/JPG
-          </span>
-        )}
-      </div>
-
-      {/* Dados extraídos */}
-      <div style={{
-        padding: '14px 16px', background: 'var(--sap-bg)',
-        border: '1px solid var(--sap-border)', borderRadius: 4,
-        display: 'flex', flexDirection: 'column', gap: 10
-      }}>
-        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--sap-subtle)', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
-          Dados extraídos da EF
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-          <Field label="Nome do Projeto">
-            <input value={efData.data?.projectName || ''} onChange={e => setEfData(p => ({ ...p, data: { ...p.data, projectName: e.target.value } }))} style={inputStyle} />
-          </Field>
-          <Field label="Empresa / Mandante">
-            <input value={efData.data?.empresa || ''} onChange={e => setEfData(p => ({ ...p, data: { ...p.data, empresa: e.target.value } }))} style={inputStyle} />
-          </Field>
-        </div>
-
-        <Field label="Título">
-          <input value={efData.data?.titulo || ''} onChange={e => setEfData(p => ({ ...p, data: { ...p.data, titulo: e.target.value } }))} style={inputStyle} />
-        </Field>
-
-        <Field label="Descrição Resumida">
-          <input value={efData.data?.descricaoResumida || ''} onChange={e => setEfData(p => ({ ...p, data: { ...p.data, descricaoResumida: e.target.value } }))} style={inputStyle} />
-        </Field>
-
-        {data.visaoGeral && (
-          <Field label="Visão Geral (seção 3.1)">
-            <textarea value={data.visaoGeral} onChange={e => setEfData(p => ({ ...p, data: { ...p.data, visaoGeral: e.target.value } }))} rows={4} style={textareaStyle} />
-          </Field>
-        )}
-
-        {data.especificacaoFuncional && (
-          <Field label="Especificação Funcional (seção 3.2)">
-            <textarea value={data.especificacaoFuncional} onChange={e => setEfData(p => ({ ...p, data: { ...p.data, especificacaoFuncional: e.target.value } }))} rows={6} style={textareaStyle} />
-          </Field>
-        )}
-      </div>
-
-      {/* Programas ABAP anexados */}
-      <div style={{
-        padding: '14px 16px', background: 'var(--sap-bg)',
-        border: '1px solid var(--sap-border)', borderRadius: 4
-      }}>
+      {/* EF files list */}
+      <div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--sap-subtle)', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
-              Programas Existentes (opcional)
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--sap-subtle)', marginTop: 2 }}>
-              Anexe os programas atuais caso a EF seja uma melhoria
-            </div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--sap-subtle)', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+            Especificações Funcionais ({efFiles.length})
           </div>
-          <button onClick={handleAddPrograms} disabled={addingFiles} style={addBtnStyle}>
-            {addingFiles ? 'Aguarde...' : '+ Adicionar .abap / .txt'}
+          <button onClick={handleAddMoreEf} disabled={loadingMore} style={addBtnStyle}>
+            {loadingMore ? 'Carregando...' : '+ Adicionar outra EF'}
           </button>
         </div>
-
-        {(efData.attachedPrograms || []).length === 0 ? (
-          <div style={{ fontSize: 12, color: 'var(--sap-subtle)', fontStyle: 'italic' }}>
-            Nenhum programa anexado
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-            {(efData.attachedPrograms || []).map((prog, i) => (
-              <div key={i} style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                padding: '6px 10px', background: 'var(--sap-base)',
-                border: '1px solid var(--sap-border)', borderRadius: 4
-              }}>
-                <span style={{ fontSize: 11, color: 'var(--sap-primary)', fontFamily: 'monospace', flex: 1 }}>
-                  {prog.name}
-                </span>
-                <span style={{ fontSize: 11, color: 'var(--sap-subtle)' }}>
-                  {(prog.content?.length || 0).toLocaleString()} chars
-                </span>
-                <button onClick={() => removeProgram(i)} style={removeBtnStyle}>×</button>
-              </div>
-            ))}
-          </div>
-        )}
+        {efFiles.map((ef, idx) => (
+          <EfFileCard
+            key={idx} idx={idx} ef={ef}
+            onRemove={() => onRemoveFile(idx)}
+            onUpdate={(updater) => onUpdateFile(idx, updater)}
+          />
+        ))}
       </div>
 
       {/* Provedor ativo */}
@@ -1166,37 +1347,16 @@ function EfReviewStep({ efData, setEfData, providers, generating, genError, genR
           background: generating || !active ? 'var(--sap-border)' : 'var(--sap-primary)',
           color: generating || !active ? 'var(--sap-subtle)' : '#fff',
           border: 'none', borderRadius: 4, cursor: generating || !active ? 'not-allowed' : 'pointer',
-          fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 8
+          fontFamily: 'inherit'
         }}
       >
-        {generating && (
-          <span style={{
-            width: 14, height: 14, border: '2px solid rgba(255,255,255,0.4)',
-            borderTop: '2px solid #fff', borderRadius: '50%',
-            animation: 'spin 0.8s linear infinite', display: 'inline-block'
-          }} />
-        )}
-        {generating ? 'Gerando código...' : 'Gerar Código a partir da EF'}
+        {efFiles.length > 1
+          ? `Gerar Código das ${efFiles.length} EFs`
+          : 'Gerar Código a partir da EF'
+        }
       </button>
 
-      {!generating && active && (efData.images?.length > 0) && (
-        <div style={{ fontSize: 12, color: 'var(--sap-subtle)', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ color: '#0070f2', fontWeight: 600 }}>●</span>
-          {efData.images.length} imagem{efData.images.length > 1 ? 'ns' : ''} PNG/JPG
-          {active.isIntegration
-            ? ' referenciada(s) no prompt do agente'
-            : ` será${efData.images.length > 1 ? 'ão' : ''} enviada${efData.images.length > 1 ? 's' : ''} ao modelo via visão`
-          }
-        </div>
-      )}
-
-      {generating && (
-        <div style={{ fontSize: 13, color: 'var(--sap-subtle)' }}>
-          {active?.isIntegration
-            ? 'Aguarde — o agente CLI está processando a EF. Isso pode levar 1-2 minutos...'
-            : 'Aguarde enquanto o código é gerado a partir da Especificação Funcional...'}
-        </div>
-      )}
+      {generating && <GeneratingAnimation type="ef" />}
     </div>
   )
 }
@@ -1246,13 +1406,17 @@ const DEFAULT_FORM = {
   interfaces: [], target_program: '', enhancement_type: 'SPOT', spot_name: '',
   context: '', rules: [''],
   tables: [], imports: [], exports: [], tables_params: [], exceptions: [],
-  attributes: [], methods: []
+  attributes: [], methods: [],
+  // CDS fields
+  cds_base_entity: '', cds_view_type: 'basic', cds_annotation_preset: 'fiori',
+  cds_fields: [], cds_associations: []
 }
 
 function CreateModal({ onClose, onSaved, user, providers }) {
   const { saveProgram } = useAbapStore()
   const { sapVersion } = useAiStore()
   const { getFlowPrompt } = useAgentStore()
+  const { getSkillsForType } = useSkillsStore()
 
   // mode: null = tela inicial, 'ef' = fluxo EF, 'manual' = wizard manual
   const [mode, setMode] = useState(null)
@@ -1261,9 +1425,9 @@ function CreateModal({ onClose, onSaved, user, providers }) {
   const [step, setStep] = useState(0)
   const [form, setForm] = useState(DEFAULT_FORM)
 
-  // Estado do fluxo EF
-  const [efData, setEfData] = useState(null)     // { data, fileName, attachedPrograms, rawText }
-  const [efStep, setEfStep] = useState('upload') // 'upload' | 'review'
+  // Estado do fluxo EF — suporte a múltiplas EFs
+  const [efFiles, setEfFiles] = useState([])      // array de { data, fileName, attachedPrograms, images, rawText }
+  const [efStep, setEfStep] = useState('upload')  // 'upload' | 'review'
 
   // Estado comum (geração)
   const [generating, setGenerating] = useState(false)
@@ -1276,21 +1440,52 @@ function CreateModal({ onClose, onSaved, user, providers }) {
   const totalSteps = steps.length
   const isLastStep = step === totalSteps
 
+  // Helpers EF
+  const addEfFile = (res) => {
+    setEfFiles(prev => [...prev, { ...res, attachedPrograms: [], images: res.images || [] }])
+  }
+  const removeEfFile = (idx) => setEfFiles(prev => prev.filter((_, i) => i !== idx))
+  const updateEfFile = (idx, updater) => setEfFiles(prev => prev.map((f, i) => i === idx ? updater(f) : f))
+
   // ── Save helpers ────────────────────────────────────────────────────────────
-  const saveEfResult = async (parsed, currentEfData, savedPath) => {
-    const name = currentEfData.data?.projectName || currentEfData.data?.titulo || 'EF_PROGRAM'
-    const description = currentEfData.data?.descricaoResumida || currentEfData.data?.titulo || ''
-    // Remove imagens base64 do metadata antes de salvar (muito pesado para o banco)
-    const { images: _imgs, ...metaSafe } = currentEfData
+  const saveEfResult = async (parsed, savedPath) => {
+    const primary = efFiles[0] || {}
+    const name = primary.data?.projectName || primary.data?.titulo || 'EF_PROGRAM'
+    const description = primary.data?.descricaoResumida || primary.data?.titulo || ''
+    const metaSafe = efFiles.map(({ images: _imgs, ...rest }) => rest)
     const res = await saveProgram({
       name,
       type: parsed?.files?.[0]?.type || 'REPORT',
       description,
-      metadata: { ...metaSafe, savedPath },
+      metadata: { efFiles: metaSafe, savedPath },
       result: parsed
     })
     if (res.success) onSaved?.()
     return res
+  }
+
+  // Builds combined EF prompt from all loaded EF files
+  const buildCombinedEfPrompt = () => {
+    if (efFiles.length === 1) return buildEfPrompt(efFiles[0], sapVersion)
+    let p = `GERAR CÓDIGO ABAP A PARTIR DE ${efFiles.length} ESPECIFICAÇÕES FUNCIONAIS\n\n`
+    if (sapVersion) p += `Versão SAP do ambiente: ${sapVersion}\n\n`
+    efFiles.forEach((ef, idx) => {
+      const d = ef.data || {}
+      p += `== ESPECIFICAÇÃO ${idx + 1}: ${ef.fileName || `EF_${idx + 1}`} ==\n`
+      if (d.titulo) p += `Título: ${d.titulo}\n`
+      if (d.descricaoResumida) p += `Descrição: ${d.descricaoResumida}\n`
+      if (d.visaoGeral?.trim()) p += `\nVisão Geral:\n${d.visaoGeral.trim()}\n`
+      if (d.especificacaoFuncional?.trim()) p += `\nEspecificação:\n${d.especificacaoFuncional.trim()}\n`
+      const progs = ef.attachedPrograms || []
+      if (progs.length) {
+        p += `\nProgramas anexados:\n`
+        progs.forEach(prog => { p += `\n=== ${prog.name} ===\n${prog.content}\n` })
+      }
+      p += '\n'
+    })
+    p += 'Integre todos os requisitos acima em um único conjunto coeso de objetos ABAP.\n'
+    p += 'Siga as regras: Fast Code, nomenclatura Z, sem SELECT em LOOP, ALV correto.'
+    return p
   }
 
   // ── Geração ─────────────────────────────────────────────────────────────────
@@ -1302,18 +1497,23 @@ function CreateModal({ onClose, onSaved, user, providers }) {
     setGenResult(null)
     setGenSavedPath(null)
     try {
-      const userPrompt = mode === 'ef' ? buildEfPrompt(efData, sapVersion) : buildAbapPrompt(form, sapVersion)
-      const programName = mode === 'ef' ? (efData.data?.projectName || 'ABAP_EF') : (form.name || 'ABAP_PROGRAM')
-      // ── IMAGENS DESABILITADAS TEMPORARIAMENTE ──────────────────────────────
-      // TODO: reativar quando confirmar suporte multimodal no provider ativo
-      // const images = mode === 'ef' ? (efData.images || []) : []
+      const userPrompt = mode === 'ef' ? buildCombinedEfPrompt() : buildAbapPrompt(form, sapVersion)
+      const programName = mode === 'ef'
+        ? (efFiles[0]?.data?.projectName || 'ABAP_EF')
+        : (form.name || 'ABAP_PROGRAM')
       const images = []
+
+      // Build system prompt: agent + skills associated with the current object type
+      const objectType = mode === 'ef' ? 'EF' : form.type
+      const skillsContext = getSkillsForType(objectType)
+      const systemPrompt = getFlowPrompt('abap') + skillsContext
+
       let rawText
 
       if (active.isIntegration) {
         const res = await window.api.generateIntegration({
           integrationType: active.integrationType,
-          systemPrompt: getFlowPrompt('abap'),
+          systemPrompt,
           userMessage: userPrompt,
           programName,
           images
@@ -1322,16 +1522,16 @@ function CreateModal({ onClose, onSaved, user, providers }) {
         rawText = res.content
         if (res.savedTo) setGenSavedPath(res.savedTo)
       } else {
-        rawText = await callAI(active, getFlowPrompt('abap'), userPrompt, images)
+        rawText = await callAI(active, systemPrompt, userPrompt, images)
       }
 
       const parsed = parseJSONResponse(rawText)
       setGenResult(parsed)
       notify('✓ Código ABAP gerado', `${parsed?.files?.length ?? 0} arquivo(s) gerado(s) — ${programName}`)
 
-      // Auto-save no banco após geração no modo EF (em background, sem fechar)
+      // Auto-save no banco após geração no modo EF
       if (mode === 'ef') {
-        saveEfResult(parsed, efData, genSavedPath)
+        saveEfResult(parsed, genSavedPath)
       }
     } catch (err) {
       setGenError(err.message)
@@ -1350,7 +1550,12 @@ function CreateModal({ onClose, onSaved, user, providers }) {
       metadata: form,
       result: genResult
     })
-    if (res.success) { onSaved?.(); onClose() }
+    if (res.success) {
+      onSaved?.()
+      onClose()
+    } else {
+      setGenError(`Erro ao salvar: ${res.error}`)
+    }
   }
 
   // ── Render: tela inicial ────────────────────────────────────────────────────
@@ -1440,6 +1645,7 @@ function CreateModal({ onClose, onSaved, user, providers }) {
       case 'Tabelas': return <StepTables form={form} update={update} />
       case 'Interface': return <StepFuncInterface form={form} update={update} />
       case 'Atributos e Métodos': return <StepClassOO form={form} update={update} />
+      case 'Entidade e Campos': return <StepCdsEntity form={form} update={update} />
       case 'Gerar': return (
         <StepGenerate
           form={form} providers={providers}
@@ -1498,34 +1704,55 @@ function CreateModal({ onClose, onSaved, user, providers }) {
             }}>
               {mode === 'ef' ? (
                 // Sidebar do fluxo EF
-                [['upload', 'Carregar EF'], ['review', 'Gerar']].map(([key, label], i) => {
-                  const isDone = key === 'upload' && efStep === 'review'
-                  const isActive = efStep === key
-                  return (
-                    <div key={key} style={{
-                      display: 'flex', alignItems: 'center', gap: 10,
-                      padding: '9px 16px',
-                      background: isActive ? 'var(--sap-primary)0f' : 'transparent',
-                      borderLeft: isActive ? '3px solid var(--sap-primary)' : '3px solid transparent',
-                      cursor: isDone ? 'pointer' : 'default',
-                      opacity: !isDone && !isActive ? 0.45 : 1
-                    }} onClick={() => { if (isDone) setEfStep('upload') }}>
-                      <div style={{
-                        width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
-                        background: isDone ? '#107e3e' : isActive ? 'var(--sap-primary)' : 'var(--sap-border)',
-                        color: isDone || isActive ? '#fff' : 'var(--sap-subtle)',
-                        fontSize: 11, fontWeight: 700,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center'
-                      }}>
-                        {isDone ? '✓' : i + 1}
+                <div style={{ padding: '8px 0' }}>
+                  {[['upload', 'Carregar EF'], ['review', 'Revisar & Gerar']].map(([key, label], i) => {
+                    const isDone = key === 'upload' && efStep === 'review'
+                    const isActive = efStep === key
+                    return (
+                      <div key={key} style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        padding: '9px 16px',
+                        background: isActive ? 'var(--sap-primary)0f' : 'transparent',
+                        borderLeft: isActive ? '3px solid var(--sap-primary)' : '3px solid transparent',
+                        cursor: isDone ? 'pointer' : 'default',
+                        opacity: !isDone && !isActive ? 0.45 : 1
+                      }} onClick={() => { if (isDone) setEfStep('upload') }}>
+                        <div style={{
+                          width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
+                          background: isDone ? '#107e3e' : isActive ? 'var(--sap-primary)' : 'var(--sap-border)',
+                          color: isDone || isActive ? '#fff' : 'var(--sap-subtle)',
+                          fontSize: 11, fontWeight: 700,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center'
+                        }}>
+                          {isDone ? '✓' : i + 1}
+                        </div>
+                        <span style={{
+                          fontSize: 12, fontWeight: isActive ? 600 : 400,
+                          color: isActive ? 'var(--sap-primary)' : isDone ? 'var(--sap-text)' : 'var(--sap-subtle)'
+                        }}>{label}</span>
                       </div>
-                      <span style={{
-                        fontSize: 12, fontWeight: isActive ? 600 : 400,
-                        color: isActive ? 'var(--sap-primary)' : isDone ? 'var(--sap-text)' : 'var(--sap-subtle)'
-                      }}>{label}</span>
+                    )
+                  })}
+                  {efFiles.length > 0 && efStep === 'review' && (
+                    <div style={{ padding: '8px 16px 0' }}>
+                      <div style={{ fontSize: 10, color: 'var(--sap-subtle)', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 4 }}>
+                        EFs carregadas
+                      </div>
+                      {efFiles.map((ef, i) => (
+                        <div key={i} style={{
+                          fontSize: 11, color: 'var(--sap-text)', padding: '3px 0',
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          display: 'flex', alignItems: 'center', gap: 4
+                        }}>
+                          <span style={{ color: '#107e3e', flexShrink: 0 }}>✓</span>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {ef.fileName || `EF ${i + 1}`}
+                          </span>
+                        </div>
+                      ))}
                     </div>
-                  )
-                })
+                  )}
+                </div>
               ) : (
                 // Sidebar do wizard manual
                 Array.from({ length: totalSteps + 1 }, (_, i) => {
@@ -1564,14 +1791,19 @@ function CreateModal({ onClose, onSaved, user, providers }) {
           <div style={{ flex: 1, padding: mode === null ? '32px 40px' : '24px', overflowY: 'auto' }}>
             {mode === null && renderIntro()}
             {mode === 'ef' && efStep === 'upload' && (
-              <EfUploadStep onLoaded={(res) => {
-                setEfData({ ...res, attachedPrograms: [], images: res.images || [] })
-                setEfStep('review')
-              }} />
+              <EfUploadStep
+                onLoaded={(res) => {
+                  addEfFile(res)
+                  setEfStep('review')
+                }}
+              />
             )}
             {mode === 'ef' && efStep === 'review' && (
               <EfReviewStep
-                efData={efData} setEfData={setEfData}
+                efFiles={efFiles}
+                onAddFile={addEfFile}
+                onRemoveFile={removeEfFile}
+                onUpdateFile={updateEfFile}
                 providers={providers}
                 generating={generating} genError={genError}
                 genResult={genResult} genSavedPath={genSavedPath}
@@ -1598,7 +1830,7 @@ function CreateModal({ onClose, onSaved, user, providers }) {
           {mode !== null && !genResult && (
             <button onClick={() => {
               setMode(null)
-              setEfData(null)
+              setEfFiles([])
               setEfStep('upload')
               setStep(0)
               setGenError(null)
@@ -1812,8 +2044,14 @@ export default function AbapView() {
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      {/* Keyframe spin */}
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      {/* Keyframes */}
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes abapPulse {
+          0%, 100% { opacity: 0.35; }
+          50% { opacity: 0.8; }
+        }
+      `}</style>
 
       {/* Page header */}
       <div style={{
