@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useAiStore } from '../store/aiStore'
-import { getActiveProvider, parseJSONResponse, cleanCode } from '../lib/aiClient'
+import { getActiveProvider, parseEnhancementResponse } from '../lib/aiClient'
 import { useAgentStore } from '../store/agentStore'
 import AbapHighlight from '../components/AbapHighlight'
 import { searchBadis, formatBadisForPrompt } from '../lib/badiSearch'
@@ -204,7 +204,7 @@ export default function EnhancementFinderView() {
         if (!res.success) throw new Error(res.error)
         raw = res.content
       }
-      setResult(parseJSONResponse(raw))
+      setResult(parseEnhancementResponse(raw))
     } catch (e) { setError(`Erro: ${e.message}`) }
     finally { setLoading(false); setLoadingStep('') }
   }

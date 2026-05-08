@@ -56,3 +56,8 @@ REGRAS DE NEGÓCIO:
 5. O nome do fornecedor deve ser buscado da LFA1 em uma única leitura (não dentro do LOOP)
 6. Itens de serviço (PSTYP = '9') devem ser ignorados
 7. O valor exibido deve ser em moeda do pedido (WAERS do EKKO)
+
+
+
+
+

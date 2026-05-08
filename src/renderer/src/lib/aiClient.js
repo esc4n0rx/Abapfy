@@ -247,52 +247,126 @@ function sanitizeResult(parsed) {
   return parsed
 }
 
+// ─── Extração interna de JSON ─────────────────────────────────────────────────
+
 /**
- * Remove blocos <thinking>...</thinking> da resposta (Claude extended thinking, etc.)
- * e extrai o JSON da resposta bruta.
+ * Tenta parsear texto como JSON com até 3 estratégias de reparo.
+ * Retorna o objeto ou null.
  */
-export function parseJSONResponse(rawText) {
-  // 1. Remove thinking blocks
-  let text = rawText.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '').trim()
-
-  // 2. Extrai de bloco de código ```json ... ``` ou ``` ... ```
-  const codeBlock = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
-  if (codeBlock) {
-    text = codeBlock[1].trim()
-  }
-
-  // 3. Localiza o objeto JSON principal — tenta do primeiro { ao último }
-  const start = text.indexOf('{')
-  const end = text.lastIndexOf('}')
-  if (start !== -1 && end !== -1 && end > start) {
-    text = text.slice(start, end + 1)
-  }
-
-  // 4. Tenta parse direto
-  try {
-    return sanitizeResult(JSON.parse(text))
-  } catch (_) { /* continua para os fallbacks */ }
-
-  // 5. Fallback: newlines reais dentro de strings JSON (problema mais comum com código CDS/ABAP)
-  //    Substitui newlines literais que estão dentro de valores de string por \n escapado
-  try {
-    const fixedNewlines = repairJsonStrings(text)
-    return sanitizeResult(JSON.parse(fixedNewlines))
-  } catch (_) { /* continua */ }
-
-  // 6. Fallback: remove caracteres de controle problemáticos e tenta novamente
+function tryParseJSON(text) {
+  if (!text) return null
+  try { return JSON.parse(text) } catch (_) {}
+  try { return JSON.parse(repairJsonStrings(text)) } catch (_) {}
   try {
     const cleaned = text
-      .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '') // ctrl chars exceto \t \n \r
+      .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '')
       .replace(/\r\n/g, '\\n')
       .replace(/\r/g, '\\n')
-    const fixedNewlines = repairJsonStrings(cleaned)
-    return sanitizeResult(JSON.parse(fixedNewlines))
-  } catch (_) { /* continua */ }
+    return JSON.parse(repairJsonStrings(cleaned))
+  } catch (_) {}
+  return null
+}
 
-  // 7. Fallback: modelo retornou código ABAP/CDS puro sem JSON
-  const looksLikeCode = /^(REPORT|PROGRAM|FUNCTION|CLASS|TYPES|DATA|CONSTANTS|@|define\s+view|\*)/im.test(text.trim())
-  if (looksLikeCode) {
+/**
+ * Fecha estruturas JSON abertas num texto truncado (sem closing } ou ]).
+ * Percorre o texto rastreando profundidade de objetos/arrays fora de strings
+ * e acrescenta os fechamentos ausentes na ordem correta.
+ */
+function closeTruncatedJSON(text) {
+  const stack = []
+  let inStr = false, esc = false
+  for (let i = 0; i < text.length; i++) {
+    if (esc) { esc = false; continue }
+    if (text[i] === '\\' && inStr) { esc = true; continue }
+    if (text[i] === '"') { inStr = !inStr; continue }
+    if (!inStr) {
+      if (text[i] === '{') stack.push('}')
+      else if (text[i] === '[') stack.push(']')
+      else if (text[i] === '}' || text[i] === ']') stack.pop()
+    }
+  }
+  // Se acabou dentro de uma string, fecha a string antes
+  let suffix = inStr ? '"' : ''
+  // Fecha na ordem inversa
+  while (stack.length) suffix += stack.pop()
+  return text + suffix
+}
+
+/**
+ * Extrai e parseia o primeiro objeto JSON de uma resposta bruta.
+ * Usa depth-counting para encontrar o } raiz (não lastIndexOf, que falha em
+ * respostas aninhadas). Suporta respostas truncadas fechando estruturas abertas.
+ * Retorna o objeto parseado ou null — nunca lança exceção.
+ */
+function extractJSON(rawText) {
+  if (!rawText || typeof rawText !== 'string') return null
+  const text = rawText.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '').trim()
+
+  const start = text.indexOf('{')
+  if (start === -1) return null
+
+  // Encontra o } raiz por depth-counting, ignorando strings
+  let depth = 0, inStr = false, esc = false, end = -1
+  for (let i = start; i < text.length; i++) {
+    if (esc) { esc = false; continue }
+    if (text[i] === '\\' && inStr) { esc = true; continue }
+    if (text[i] === '"') { inStr = !inStr; continue }
+    if (!inStr) {
+      if (text[i] === '{') depth++
+      else if (text[i] === '}') { if (--depth === 0) { end = i; break } }
+    }
+  }
+
+  if (end !== -1) {
+    // JSON completo encontrado
+    return tryParseJSON(text.slice(start, end + 1))
+  }
+
+  // Resposta truncada — repara strings primeiro, depois fecha estruturas abertas
+  const truncated = text.slice(start)
+  try { return JSON.parse(closeTruncatedJSON(repairJsonStrings(truncated))) } catch (_) {}
+  return null
+}
+
+// Regex de detecção de código ABAP puro (sem envelope JSON ou Markdown)
+const ABAP_CODE_RE = /^(REPORT|PROGRAM|FUNCTION|CLASS|TYPES|DATA|CONSTANTS|@|define\s+view|\*|AT\s+SELECTION|AT\s+LINE|SELECT\s+|LOOP\s+AT|FORM\s+|TABLES\s*\.|PARAMETERS\s+|SELECT-OPTIONS|START-OF-SELECTION|END-OF-SELECTION|PERFORM\s+|MODULE\s+|MOVE\s+|WRITE\s+|CALL\s+|IF\s+|CASE\s+|DO\s*\.|WHILE\s+|CHECK\s+|CLEAR\s+|REFRESH\s+|SORT\s+|READ\s+TABLE|DELETE\s+|INSERT\s+|MODIFY\s+|APPEND\s+|INCLUDE\s+|FIELD-SYMBOLS|ENHANCEMENT)/im
+
+/**
+ * Extrai arquivos de uma resposta Markdown estruturada no formato:
+ *   ## `ZNOME` — TIPO
+ *   *descrição*
+ *   ```abap
+ *   código
+ *   ```
+ */
+function extractFilesFromMarkdown(text) {
+  const files = []
+  // Aceita — (mdash), – (ndash), - (hífen) e · (middle dot) como separador nome/tipo
+  const re = /##\s+`([^`]+)`\s*[—–·\-]\s*(\w+)[^\n]*\n(?:\*([^\n]*)\*\s*\n)?\s*```(?:abap|sap|ABAP)?\s*\n([\s\S]*?)```/gi
+  let match
+  while ((match = re.exec(text)) !== null) {
+    const name = match[1].trim().toUpperCase()
+    const type = match[2].trim().toUpperCase()
+    const description = match[3]?.trim() || ''
+    const content = match[4].replace(/\n$/, '') // remove trailing newline antes do fence
+    files.push({ name, type, description, parent: null, content })
+  }
+  // Atribui parent: primeiro PROG/PROG encontrado é pai dos INCL seguintes
+  const mainFile = files.find(f => f.type === 'PROG' || f.type === 'FUGR')
+  files.forEach(f => {
+    if (f.parent === null && f.type === 'INCL' && mainFile) f.parent = mainFile.name
+  })
+  return files
+}
+
+// ─── Parser genérico (legado — usar parsers específicos por view) ─────────────
+
+export function parseJSONResponse(rawText) {
+  const parsed = extractJSON(rawText)
+  if (parsed) return sanitizeResult(parsed)
+
+  const text = (rawText || '').replace(/<thinking>[\s\S]*?<\/thinking>/gi, '').trim()
+  if (ABAP_CODE_RE.test(text)) {
     const nameMatch = text.match(/^(?:REPORT|PROGRAM)\s+(\w+)/im)
       || text.match(/define\s+view\s+entity\s+(\w+)/im)
     const name = nameMatch?.[1] || 'ZABAP_PROGRAM'
@@ -309,20 +383,166 @@ export function parseJSONResponse(rawText) {
     })
   }
 
-  // 8. Nenhum fallback funcionou — lança erro descritivo
   throw new Error(`Resposta do modelo não é JSON válido. Início: "${text.slice(0, 120)}"`)
 }
 
+// ─── Parsers especializados por view ─────────────────────────────────────────
+
 /**
- * Repara newlines literais dentro de valores de string JSON.
- * O modelo às vezes escreve o content com quebras de linha reais em vez de \n,
- * o que quebra o JSON.parse. Esta função percorre o texto caractere a caractere
- * e substitui \n e \r literais que estão dentro de strings por \\n / \\r.
+ * AbapView — { files[], analysis, approach, alv_approach, dependencies, transport_order_type, notes }
+ * Fallback 1: código ABAP puro (sem JSON) → encapsula em files[].
+ * Fallback 2: qualquer outro formato → empacota o texto como _markdown para renderização.
+ */
+export function parseAbapResponse(rawText) {
+  const text = (rawText || '').replace(/<thinking>[\s\S]*?<\/thinking>/gi, '').trim()
+
+  // 1. Tenta extrair arquivos do Markdown estruturado (novo formato do agente)
+  const mdFiles = extractFilesFromMarkdown(text)
+  if (mdFiles.length > 0) {
+    const analysisMatch = text.match(/##\s+An[aá]lise\s*\n([\s\S]*?)(?=\n---|\n##|$)/i)
+    const notesMatch    = text.match(/##\s+Notas\s*\n([\s\S]*?)(?=\n---|\n##|$)/i)
+    return {
+      analysis: analysisMatch?.[1]?.trim() || '',
+      approach: 'fast_code',
+      fast_code_justified: true,
+      alv_approach: 'none',
+      files: mdFiles,
+      dependencies: [],
+      transport_order_type: 'Workbench',
+      notes: notesMatch?.[1]?.trim() || '',
+    }
+  }
+
+  // 2. Tenta JSON (formato legado / modelos que ainda retornam JSON)
+  const parsed = extractJSON(rawText)
+  if (parsed && Array.isArray(parsed.files) && parsed.files.length > 0) {
+    parsed.files = parsed.files.map(f => {
+      f = normalizeFile(f)
+      if (f.content) f.content = cleanCode(f.content)
+      return f
+    })
+    return parsed
+  }
+
+  // 3. Fallback: resposta é código ABAP puro (sem envelope)
+  if (ABAP_CODE_RE.test(text)) {
+    const nameMatch = text.match(/^(?:REPORT|PROGRAM)\s+(\w+)/im)
+      || text.match(/define\s+view\s+entity\s+(\w+)/im)
+    const name = nameMatch?.[1] || 'ZABAP_PROGRAM'
+    const isCds = /define\s+view/i.test(text)
+    return {
+      analysis: 'Resposta retornada como código puro — encapsulada automaticamente.',
+      approach: isCds ? 'mixed' : 'fast_code',
+      fast_code_justified: true,
+      alv_approach: 'none',
+      files: [{ name, type: isCds ? 'CDS' : 'PROG', description: 'Gerado automaticamente', parent: null, content: cleanCode(text) }],
+      dependencies: [],
+      transport_order_type: 'Workbench',
+    }
+  }
+
+  // 4. Último recurso: renderiza o texto como Markdown bruto
+  return { _markdown: text }
+}
+
+/**
+ * DtecView — aceita tanto JSON quanto Markdown.
+ * Retorna { _markdown, object_name } quando o modelo responde em Markdown,
+ * ou o objeto JSON completo quando a resposta é JSON válido.
+ */
+export function parseDtecResponse(rawText) {
+  const text = (rawText || '').replace(/<thinking>[\s\S]*?<\/thinking>/gi, '').trim()
+  if (!text) throw new Error('Resposta vazia do modelo.')
+
+  // Tenta JSON primeiro
+  const parsed = extractJSON(rawText)
+  if (parsed && ['object_name', 'object_type', 'objective', 'processing_logic', 'structure'].some(f => parsed[f])) {
+    return parsed
+  }
+
+  // Markdown: extrai nome do objeto do título e empacota o markdown raw
+  const nameMatch = text.match(/^#[^#\n]*?[—\-]\s*(\S+)/m)
+    || text.match(/\|\s*\*{0,2}Nome do Objeto\*{0,2}\s*\|\s*([^|\n]+)\|/i)
+  const object_name = nameMatch?.[1]?.trim() || 'DTec'
+  return { _markdown: text, object_name }
+}
+
+/**
+ * EspecificacoesView (geração de EF) — { project_name, author, brief_description,
+ *   summary_description, macro_overview, functional_spec }
+ */
+export function parseEfResponse(rawText) {
+  const parsed = extractJSON(rawText)
+  if (!parsed || !['project_name', 'functional_spec', 'summary_description', 'macro_overview'].some(f => parsed[f])) {
+    throw new Error('O modelo não retornou uma Especificação Funcional válida. Verifique o agente e tente novamente.')
+  }
+  return parsed
+}
+
+/**
+ * EstimativasView — { projeto, versao_sap, complexidade_geral, objetos_identificados[],
+ *   estimativas: { agressiva, segura, tranquila }, notas_gerais }
+ */
+export function parseEffortResponse(rawText) {
+  const parsed = extractJSON(rawText)
+  if (!parsed || (!parsed.estimativas && !parsed.objetos_identificados)) {
+    throw new Error('O modelo não retornou estimativas válidas. Verifique o agente e tente novamente.')
+  }
+  return parsed
+}
+
+/**
+ * PerformanceView — { score, summary, issues[], general_recommendations[] }
+ */
+export function parsePerformanceResponse(rawText) {
+  const parsed = extractJSON(rawText)
+  if (!parsed || (!parsed.issues && parsed.score == null)) {
+    throw new Error('O modelo não retornou uma análise de performance válida. Verifique o agente e tente novamente.')
+  }
+  if (Array.isArray(parsed.issues)) {
+    parsed.issues.forEach(i => { if (i.fix_code) i.fix_code = cleanCode(i.fix_code) })
+  }
+  return parsed
+}
+
+/**
+ * EnhancementFinderView — { summary, recommendations[], additional_notes }
+ */
+export function parseEnhancementResponse(rawText) {
+  const parsed = extractJSON(rawText)
+  if (!parsed || (!parsed.recommendations && !parsed.summary)) {
+    throw new Error('O modelo não retornou sugestões de enhancement válidas. Verifique o agente e tente novamente.')
+  }
+  if (Array.isArray(parsed.recommendations)) {
+    parsed.recommendations.forEach(r => { if (r.code_skeleton) r.code_skeleton = cleanCode(r.code_skeleton) })
+  }
+  return parsed
+}
+
+/**
+ * CodeReviewView — { summary, risk_level, findings[], statistics{}, verdict, notes }
+ * Retorna null se a resposta for markdown conversacional (não JSON).
+ */
+export function parseCodeReviewResponse(rawText) {
+  return extractJSON(rawText)
+}
+
+/**
+ * Repara newlines literais e aspas de comentários ABAP dentro de strings JSON.
+ *
+ * Problemas tratados:
+ * 1. Newlines literais dentro de values de string → escapados como \n
+ * 2. Aspas ABAP: em ABAP, `"` inicia comentário de linha. Quando o modelo
+ *    inclui código ABAP dentro de um campo JSON sem escapar, `repairJsonStrings`
+ *    interpretava o `"` do comentário como fim da string JSON, corrompendo o parse.
+ *    Heurística: `"` após newline (início de linha) dentro de uma string é
+ *    ABAP comment — é escapado. `"` não precedido de newline encerra a string.
  */
 function repairJsonStrings(text) {
   let result = ''
   let inString = false
   let escaped = false
+  let afterNewline = false // true logo após processar \n ou \r dentro de string
 
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]
@@ -330,25 +550,49 @@ function repairJsonStrings(text) {
     if (escaped) {
       result += ch
       escaped = false
+      // \n or \r escape sequence = end of logical line inside string
+      afterNewline = (ch === 'n' || ch === 'r')
       continue
     }
 
     if (ch === '\\' && inString) {
       result += ch
       escaped = true
+      afterNewline = false
       continue
     }
 
     if (ch === '"') {
+      if (inString) {
+        const next = text[i + 1] ?? ''
+        const nextIsStructural = !next || /[\}\],:\r\n"]/.test(next)
+        // Heurística 1: " início de linha (após \n + espaços) = comentário ABAP
+        const isLineStart = afterNewline
+        // Heurística 2: " após 2+ espaços no meio da linha = comentário inline ABAP
+        //   Ex: "TYPE ekko-ebeln,       " Número do pedido"
+        //   Em ABAP, " só inicia string via aspas simples; " dupla = sempre comentário
+        const rLen = result.length
+        const isInlineComment = !afterNewline &&
+          rLen >= 2 && result[rLen - 1] === ' ' && result[rLen - 2] === ' '
+        if ((isLineStart || isInlineComment) && !nextIsStructural) {
+          result += '\\"'
+          afterNewline = false
+          continue
+        }
+      }
       inString = !inString
+      afterNewline = false
       result += ch
       continue
     }
 
     if (inString) {
-      if (ch === '\n') { result += '\\n'; continue }
-      if (ch === '\r') { result += '\\r'; continue }
-      if (ch === '\t') { result += '\\t'; continue }
+      if (ch === '\n') { result += '\\n'; afterNewline = true; continue }
+      if (ch === '\r') { result += '\\r'; afterNewline = true; continue }
+      if (ch === '\t') { result += '\\t'; afterNewline = false; continue }
+      // espaços e tabs no início de linha não resetam afterNewline (indentação ABAP)
+      if (afterNewline && (ch === ' ')) { result += ch; continue }
+      afterNewline = false
     }
 
     result += ch

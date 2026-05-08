@@ -4,7 +4,7 @@ import { useAgentStore } from '../store/agentStore'
 import { useEstimationParametersStore } from '../store/estimationParametersStore'
 import { useClienteParametrosStore } from '../store/clienteParametrosStore'
 import { useEstimativasStore } from '../store/estimativasStore'
-import { callAI, getActiveProvider, parseJSONResponse } from '../lib/aiClient'
+import { callAI, getActiveProvider, parseEffortResponse } from '../lib/aiClient'
 import { cleanEfForPrompt } from '../lib/efUtils'
 
 // ─── SAP versions ─────────────────────────────────────────────────────────────
@@ -344,9 +344,7 @@ export default function EstimativasView() {
       const images = mode === 'ef' && efData?.images?.length ? efData.images.slice(0, 6) : []
 
       const rawText = await callAI(active, systemPrompt, userPrompt, images)
-      const parsed  = parseJSONResponse(rawText)
-
-      if (!parsed?.estimativas) throw new Error('Resposta inválida da IA. Verifique o agente e tente novamente.')
+      const parsed  = parseEffortResponse(rawText)
       setResult(parsed)
     } catch (err) {
       setGenError(err.message)
@@ -398,7 +396,7 @@ export default function EstimativasView() {
       const images = mode === 'ef' && efData?.images?.length ? efData.images.slice(0, 6) : []
 
       const rawText = await callAI(active, systemPrompt, userPrompt, images)
-      const parsed  = parseJSONResponse(rawText)
+      const parsed  = parseEffortResponse(rawText)
 
       if (!parsed?.estimativas) throw new Error('Resposta inválida da IA.')
 

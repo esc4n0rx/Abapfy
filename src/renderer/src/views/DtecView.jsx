@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { useAiStore } from '../store/aiStore'
 import { useAuthStore } from '../store/authStore'
-import { getActiveProvider, parseJSONResponse } from '../lib/aiClient'
+import { getActiveProvider, parseDtecResponse } from '../lib/aiClient'
 import { useAgentStore } from '../store/agentStore'
 import { notify } from '../lib/notify'
 
@@ -46,21 +48,43 @@ function Section({ label, value, mono }) {
   )
 }
 
+const mdStyle = {
+  fontSize: 13, color: 'var(--sap-text)', lineHeight: 1.75,
+}
+const mdComponents = {
+  h1: ({ children }) => <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--sap-text)', margin: '20px 0 8px', borderBottom: '2px solid var(--sap-border)', paddingBottom: 6 }}>{children}</h1>,
+  h2: ({ children }) => <h2 style={{ fontSize: 15, fontWeight: 700, color: 'var(--sap-text)', margin: '18px 0 6px', borderBottom: '1px solid var(--sap-border)', paddingBottom: 4 }}>{children}</h2>,
+  h3: ({ children }) => <h3 style={{ fontSize: 13, fontWeight: 700, color: 'var(--sap-text)', margin: '14px 0 4px' }}>{children}</h3>,
+  h4: ({ children }) => <h4 style={{ fontSize: 13, fontWeight: 600, color: 'var(--sap-subtle)', margin: '10px 0 4px' }}>{children}</h4>,
+  p:  ({ children }) => <p style={{ margin: '6px 0', color: 'var(--sap-text)' }}>{children}</p>,
+  code: ({ inline, children }) => inline
+    ? <code style={{ fontFamily: '"Cascadia Code","Consolas",monospace', fontSize: 12, background: 'var(--sap-bg)', border: '1px solid var(--sap-border)', borderRadius: 3, padding: '1px 5px', color: 'var(--sap-primary)' }}>{children}</code>
+    : <pre style={{ fontFamily: '"Cascadia Code","Consolas",monospace', fontSize: 12, background: 'var(--sap-bg)', border: '1px solid var(--sap-border)', borderRadius: 6, padding: '10px 14px', overflowX: 'auto', margin: '8px 0', whiteSpace: 'pre-wrap', color: 'var(--sap-text)' }}><code>{children}</code></pre>,
+  table: ({ children }) => <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, margin: '8px 0' }}>{children}</table>,
+  thead: ({ children }) => <thead style={{ background: 'var(--sap-bg)' }}>{children}</thead>,
+  th: ({ children }) => <th style={{ padding: '6px 10px', textAlign: 'left', fontWeight: 600, color: 'var(--sap-subtle)', fontSize: 11, textTransform: 'uppercase', borderBottom: '1px solid var(--sap-border)' }}>{children}</th>,
+  td: ({ children }) => <td style={{ padding: '6px 10px', borderBottom: '1px solid var(--sap-border)', color: 'var(--sap-text)', verticalAlign: 'top' }}>{children}</td>,
+  blockquote: ({ children }) => <blockquote style={{ margin: '8px 0', padding: '8px 14px', borderLeft: '3px solid var(--sap-primary)', background: 'var(--sap-bg)', borderRadius: '0 4px 4px 0', color: 'var(--sap-subtle)', fontSize: 12 }}>{children}</blockquote>,
+  ul: ({ children }) => <ul style={{ paddingLeft: 20, margin: '6px 0' }}>{children}</ul>,
+  ol: ({ children }) => <ol style={{ paddingLeft: 20, margin: '6px 0' }}>{children}</ol>,
+  li: ({ children }) => <li style={{ margin: '3px 0', color: 'var(--sap-text)' }}>{children}</li>,
+  hr: () => <hr style={{ border: 'none', borderTop: '1px solid var(--sap-border)', margin: '16px 0' }} />,
+  strong: ({ children }) => <strong style={{ fontWeight: 700, color: 'var(--sap-text)' }}>{children}</strong>,
+}
+
 function DtecDetail({ dtec, onDelete }) {
   const [confirmDel, setConfirmDel] = useState(false)
   const d = dtec.content || {}
-  const moduleColor = MODULE_COLORS[d.sap_module] || '#6a6d70'
+  const isMarkdown = !!d._markdown
 
   const copyAll = () => {
-    const text = [
+    const text = isMarkdown ? d._markdown : [
       `DOCUMENTAÇÃO TÉCNICA — ${d.object_name || dtec.name}`,
       `Tipo: ${d.object_type || ''}  |  Módulo: ${d.sap_module || ''}`,
       `Data: ${formatDate(dtec.created_at)}`, '',
       `OBJETIVO\n${d.objective || ''}`, '',
       `ESTRUTURA\n${d.structure || ''}`, '',
-      `LÓGICA DE PROCESSAMENTO\n${d.processing_logic || ''}`, '',
-      `TRATAMENTO DE ERROS\n${d.error_handling || ''}`, '',
-      `PERFORMANCE\n${d.performance_notes || ''}`
+      `LÓGICA DE PROCESSAMENTO\n${d.processing_logic || ''}`,
     ].join('\n')
     navigator.clipboard.writeText(text)
   }
@@ -71,15 +95,12 @@ function DtecDetail({ dtec, onDelete }) {
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 20 }}>
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            <span style={{
-              fontSize: 11, fontWeight: 700, color: '#fff', background: moduleColor,
-              padding: '2px 7px', borderRadius: 3
-            }}>{d.sap_module || 'SAP'}</span>
-            <span style={{
-              fontSize: 11, fontWeight: 600, color: 'var(--sap-subtle)',
-              background: 'var(--sap-bg)', border: '1px solid var(--sap-border)',
-              padding: '2px 7px', borderRadius: 3
-            }}>{d.object_type}</span>
+            {!isMarkdown && d.sap_module && (
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', background: MODULE_COLORS[d.sap_module] || '#6a6d70', padding: '2px 7px', borderRadius: 3 }}>{d.sap_module}</span>
+            )}
+            {!isMarkdown && d.object_type && (
+              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--sap-subtle)', background: 'var(--sap-bg)', border: '1px solid var(--sap-border)', padding: '2px 7px', borderRadius: 3 }}>{d.object_type}</span>
+            )}
             <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--sap-text)', fontFamily: 'monospace' }}>
               {d.object_name || dtec.name}
             </span>
@@ -87,14 +108,8 @@ function DtecDetail({ dtec, onDelete }) {
           <div style={{ fontSize: 11, color: 'var(--sap-subtle)' }}>{formatDate(dtec.created_at)}</div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={copyAll} style={{
-            fontSize: 12, color: 'var(--sap-primary)', background: 'transparent',
-            border: '1px solid var(--sap-primary)', borderRadius: 4, padding: '5px 14px', cursor: 'pointer', fontFamily: 'inherit'
-          }}>Copiar DTec</button>
-          <button onClick={() => setConfirmDel(true)} style={{
-            fontSize: 12, color: '#bb0000', background: 'transparent',
-            border: '1px solid #bb0000', borderRadius: 4, padding: '5px 14px', cursor: 'pointer', fontFamily: 'inherit'
-          }}>Excluir</button>
+          <button onClick={copyAll} style={{ fontSize: 12, color: 'var(--sap-primary)', background: 'transparent', border: '1px solid var(--sap-primary)', borderRadius: 4, padding: '5px 14px', cursor: 'pointer', fontFamily: 'inherit' }}>Copiar DTec</button>
+          <button onClick={() => setConfirmDel(true)} style={{ fontSize: 12, color: '#bb0000', background: 'transparent', border: '1px solid #bb0000', borderRadius: 4, padding: '5px 14px', cursor: 'pointer', fontFamily: 'inherit' }}>Excluir</button>
         </div>
       </div>
 
@@ -106,62 +121,60 @@ function DtecDetail({ dtec, onDelete }) {
         </div>
       )}
 
-      <Section label="Objetivo" value={d.objective} />
-      <Section label="Estrutura Técnica" value={d.structure} />
-
-      {/* Tables */}
-      {d.tables?.length > 0 && (
-        <div style={{ marginBottom: 16, border: '1px solid var(--sap-border)', borderRadius: 8, overflow: 'hidden' }}>
-          <div style={{ padding: '9px 14px', background: 'var(--sap-bg)', borderBottom: '1px solid var(--sap-border)' }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--sap-text)' }}>Tabelas e Estruturas SAP</span>
-          </div>
-          <div style={{ padding: 12 }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr style={{ background: 'var(--sap-bg)' }}>
-                  {['Tabela', 'Descrição', 'Uso'].map(h => (
-                    <th key={h} style={{ padding: '6px 10px', textAlign: 'left', fontWeight: 600, color: 'var(--sap-subtle)', fontSize: 11, textTransform: 'uppercase', borderBottom: '1px solid var(--sap-border)' }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {d.tables.map((t, i) => (
-                  <tr key={i} style={{ borderBottom: '1px solid var(--sap-border)' }}>
-                    <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontWeight: 700, color: 'var(--sap-primary)' }}>{t.name}</td>
-                    <td style={{ padding: '7px 10px', color: 'var(--sap-text)' }}>{t.description}</td>
-                    <td style={{ padding: '7px 10px', color: 'var(--sap-subtle)', fontSize: 12 }}>{t.usage}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+      {isMarkdown ? (
+        <div style={mdStyle}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+            {d._markdown}
+          </ReactMarkdown>
         </div>
-      )}
-
-      <Section label="Parâmetros e Interface" value={d.parameters} />
-      <Section label="Lógica de Processamento" value={d.processing_logic} />
-      <Section label="Tratamento de Erros" value={d.error_handling} />
-
-      {/* Dependencies */}
-      {d.dependencies?.length > 0 && (
-        <div style={{ marginBottom: 16, border: '1px solid var(--sap-border)', borderRadius: 8, overflow: 'hidden' }}>
-          <div style={{ padding: '9px 14px', background: 'var(--sap-bg)', borderBottom: '1px solid var(--sap-border)' }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--sap-text)' }}>Dependências</span>
-          </div>
-          <div style={{ padding: 12 }}>
-            {d.dependencies.map((dep, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
-                <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: '#0070f2', padding: '2px 6px', borderRadius: 3, flexShrink: 0 }}>{dep.type}</span>
-                <span style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--sap-text)', flexShrink: 0 }}>{dep.name}</span>
-                <span style={{ fontSize: 12, color: 'var(--sap-subtle)' }}>— {dep.description}</span>
+      ) : (
+        <>
+          <Section label="Objetivo" value={d.objective} />
+          <Section label="Estrutura Técnica" value={d.structure} />
+          {d.tables?.length > 0 && (
+            <div style={{ marginBottom: 16, border: '1px solid var(--sap-border)', borderRadius: 8, overflow: 'hidden' }}>
+              <div style={{ padding: '9px 14px', background: 'var(--sap-bg)', borderBottom: '1px solid var(--sap-border)' }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--sap-text)' }}>Tabelas e Estruturas SAP</span>
               </div>
-            ))}
-          </div>
-        </div>
+              <div style={{ padding: 12 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead><tr style={{ background: 'var(--sap-bg)' }}>
+                    {['Tabela', 'Descrição', 'Uso'].map(h => <th key={h} style={{ padding: '6px 10px', textAlign: 'left', fontWeight: 600, color: 'var(--sap-subtle)', fontSize: 11, textTransform: 'uppercase', borderBottom: '1px solid var(--sap-border)' }}>{h}</th>)}
+                  </tr></thead>
+                  <tbody>{d.tables.map((t, i) => (
+                    <tr key={i} style={{ borderBottom: '1px solid var(--sap-border)' }}>
+                      <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontWeight: 700, color: 'var(--sap-primary)' }}>{t.name}</td>
+                      <td style={{ padding: '7px 10px', color: 'var(--sap-text)' }}>{t.description}</td>
+                      <td style={{ padding: '7px 10px', color: 'var(--sap-subtle)', fontSize: 12 }}>{t.usage}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          <Section label="Parâmetros e Interface" value={d.parameters} />
+          <Section label="Lógica de Processamento" value={d.processing_logic} />
+          <Section label="Tratamento de Erros" value={d.error_handling} />
+          {d.dependencies?.length > 0 && (
+            <div style={{ marginBottom: 16, border: '1px solid var(--sap-border)', borderRadius: 8, overflow: 'hidden' }}>
+              <div style={{ padding: '9px 14px', background: 'var(--sap-bg)', borderBottom: '1px solid var(--sap-border)' }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--sap-text)' }}>Dependências</span>
+              </div>
+              <div style={{ padding: 12 }}>
+                {d.dependencies.map((dep, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: '#0070f2', padding: '2px 6px', borderRadius: 3, flexShrink: 0 }}>{dep.type}</span>
+                    <span style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--sap-text)', flexShrink: 0 }}>{dep.name}</span>
+                    <span style={{ fontSize: 12, color: 'var(--sap-subtle)' }}>— {dep.description}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <Section label="Considerações de Performance" value={d.performance_notes} />
+          <Section label="Template — Histórico de Alterações" value={d.change_log_template} mono />
+        </>
       )}
-
-      <Section label="Considerações de Performance" value={d.performance_notes} />
-      <Section label="Template — Histórico de Alterações" value={d.change_log_template} mono />
     </div>
   )
 }
@@ -273,7 +286,7 @@ export default function DtecView() {
         raw = res.content
       }
 
-      setGeneratedContent(parseJSONResponse(raw))
+      setGeneratedContent(parseDtecResponse(raw))
     } catch (e) { setError(`Erro: ${e.message}`) }
     finally { setGenerating(false) }
   }

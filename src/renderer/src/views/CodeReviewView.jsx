@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useAiStore } from '../store/aiStore'
 import { useCodeReviewStore } from '../store/codeReviewStore'
-import { getActiveProvider, parseJSONResponse } from '../lib/aiClient'
+import { getActiveProvider, parseCodeReviewResponse } from '../lib/aiClient'
 import { notify } from '../lib/notify'
 import { useAgentStore } from '../store/agentStore'
 
@@ -382,7 +382,7 @@ function MessageBubble({ msg }) {
   // AI message
   let jsonParsed = null
   if (msg.isJson) {
-    try { jsonParsed = parseJSONResponse(msg.content) } catch { /* fallback to text */ }
+    jsonParsed = parseCodeReviewResponse(msg.content)
   }
 
   return (

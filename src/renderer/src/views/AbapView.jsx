@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import AbapHighlight from '../components/AbapHighlight'
 import { useAbapStore } from '../store/abapStore'
 import { useAiStore } from '../store/aiStore'
 import { useAuthStore } from '../store/authStore'
-import { callAI, parseJSONResponse, getActiveProvider, buildAbapPrompt, cleanCode } from '../lib/aiClient'
+import { callAI, parseAbapResponse, getActiveProvider, buildAbapPrompt, cleanCode } from '../lib/aiClient'
 import { notify } from '../lib/notify'
 import { useAgentStore } from '../store/agentStore'
 import { useSkillsStore } from '../store/skillsStore'
@@ -663,24 +665,8 @@ function SapVersionBadge({ sapVersion }) {
   )
 }
 
-function StepGenerate({ form, providers, generating, genError, genResult, genSavedPath, sapVersion, onGenerate }) {
+function StepGenerate({ form, providers, generating, genError, sapVersion, onGenerate }) {
   const active = getActiveProvider(providers)
-
-  if (genResult) {
-    return (
-      <>
-        <ResultContent result={genResult} programName={form.name} providers={providers} />
-        {genSavedPath && (
-          <div style={{
-            marginTop: 12, padding: '9px 14px', borderRadius: 4, fontSize: 12,
-            background: '#f3faf5', border: '1px solid #c3e6cb', color: 'var(--sap-positive)'
-          }}>
-            Arquivos ABAP salvos em: <strong>{genSavedPath}</strong>
-          </div>
-        )}
-      </>
-    )
-  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -810,6 +796,53 @@ function FileCard({ file }) {
 
 const MAX_FIX_ATTEMPTS = 5
 
+// Componentes markdown para renderização de respostas não-JSON do ABAP
+const abapMdComponents = {
+  h1: ({ children }) => <h1 style={{ fontSize: 17, fontWeight: 700, color: 'var(--sap-text)', margin: '18px 0 8px', borderBottom: '2px solid var(--sap-border)', paddingBottom: 6 }}>{children}</h1>,
+  h2: ({ children }) => <h2 style={{ fontSize: 14, fontWeight: 700, color: 'var(--sap-text)', margin: '14px 0 6px', borderBottom: '1px solid var(--sap-border)', paddingBottom: 4 }}>{children}</h2>,
+  h3: ({ children }) => <h3 style={{ fontSize: 13, fontWeight: 700, color: 'var(--sap-text)', margin: '12px 0 4px' }}>{children}</h3>,
+  p:  ({ children }) => <p style={{ margin: '6px 0', color: 'var(--sap-text)', fontSize: 13 }}>{children}</p>,
+  code({ inline, className, children }) {
+    const lang = (className || '').replace('language-', '').toLowerCase()
+    const code = String(children).replace(/\n$/, '')
+    if (!inline && (lang === 'abap' || lang === 'sap' || lang === '')) {
+      return <AbapHighlight code={code} maxHeight={9999} />
+    }
+    if (!inline) {
+      return <pre style={{ fontFamily: '"Cascadia Code","Consolas",monospace', fontSize: 12, background: 'var(--sap-bg)', border: '1px solid var(--sap-border)', borderRadius: 6, padding: '10px 14px', overflowX: 'auto', margin: '8px 0', whiteSpace: 'pre-wrap', color: 'var(--sap-text)' }}><code>{code}</code></pre>
+    }
+    return <code style={{ fontFamily: '"Cascadia Code","Consolas",monospace', fontSize: 12, background: 'var(--sap-bg)', border: '1px solid var(--sap-border)', borderRadius: 3, padding: '1px 5px', color: 'var(--sap-primary)' }}>{children}</code>
+  },
+  table: ({ children }) => <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, margin: '8px 0' }}>{children}</table>,
+  thead: ({ children }) => <thead style={{ background: 'var(--sap-bg)' }}>{children}</thead>,
+  th: ({ children }) => <th style={{ padding: '6px 10px', textAlign: 'left', fontWeight: 600, color: 'var(--sap-subtle)', fontSize: 11, textTransform: 'uppercase', borderBottom: '1px solid var(--sap-border)' }}>{children}</th>,
+  td: ({ children }) => <td style={{ padding: '6px 10px', borderBottom: '1px solid var(--sap-border)', color: 'var(--sap-text)', verticalAlign: 'top' }}>{children}</td>,
+  blockquote: ({ children }) => <blockquote style={{ margin: '8px 0', padding: '8px 14px', borderLeft: '3px solid var(--sap-primary)', background: 'var(--sap-bg)', borderRadius: '0 4px 4px 0', color: 'var(--sap-subtle)', fontSize: 12 }}>{children}</blockquote>,
+  ul: ({ children }) => <ul style={{ paddingLeft: 20, margin: '6px 0' }}>{children}</ul>,
+  ol: ({ children }) => <ol style={{ paddingLeft: 20, margin: '6px 0' }}>{children}</ol>,
+  li: ({ children }) => <li style={{ margin: '3px 0', color: 'var(--sap-text)', fontSize: 13 }}>{children}</li>,
+  hr: () => <hr style={{ border: 'none', borderTop: '1px solid var(--sap-border)', margin: '16px 0' }} />,
+  strong: ({ children }) => <strong style={{ fontWeight: 700 }}>{children}</strong>,
+}
+
+function MarkdownResult({ markdown }) {
+  const copyMd = () => navigator.clipboard.writeText(markdown)
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
+        <button onClick={copyMd} style={{ fontSize: 12, color: 'var(--sap-primary)', background: 'transparent', border: '1px solid var(--sap-primary)', borderRadius: 4, padding: '5px 14px', cursor: 'pointer', fontFamily: 'inherit' }}>
+          Copiar Resposta
+        </button>
+      </div>
+      <div style={{ fontSize: 13, color: 'var(--sap-text)', lineHeight: 1.75 }}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={abapMdComponents}>
+          {markdown}
+        </ReactMarkdown>
+      </div>
+    </div>
+  )
+}
+
 function ResultContent({ result, programName, providers }) {
   const { getFlowPrompt } = useAgentStore()
   const [copiedAll, setCopiedAll] = useState(false)
@@ -883,7 +916,7 @@ function ResultContent({ result, programName, providers }) {
         } else {
           rawText = await callAI(active, getFlowPrompt('abap'), fixPrompt)
         }
-        const parsed = parseJSONResponse(rawText)
+        const parsed = parseAbapResponse(rawText)
         if (parsed?.files?.length) {
           files = parsed.files
           setCurrentResult(parsed)
@@ -897,6 +930,11 @@ function ResultContent({ result, programName, providers }) {
     setValidateResult(lastRes)
     setStatusMsg('')
     setValidating(false)
+  }
+
+  // Fallback: modelo retornou markdown em vez de JSON estruturado
+  if (currentResult._markdown) {
+    return <MarkdownResult markdown={currentResult._markdown} />
   }
 
   const canValidate = !!window.api?.validateAbap && (currentResult.files?.length || 0) > 0
@@ -1247,7 +1285,7 @@ function EfFileCard({ ef, idx, onRemove, onUpdate }) {
   )
 }
 
-function EfReviewStep({ efFiles, onAddFile, onRemoveFile, onUpdateFile, providers, generating, genError, genResult, genSavedPath, onGenerate }) {
+function EfReviewStep({ efFiles, onAddFile, onRemoveFile, onUpdateFile, providers, generating, genError, onGenerate }) {
   const active = getActiveProvider(providers)
   const [loadingMore, setLoadingMore] = useState(false)
 
@@ -1260,27 +1298,6 @@ function EfReviewStep({ efFiles, onAddFile, onRemoveFile, onUpdateFile, provider
     } finally {
       setLoadingMore(false)
     }
-  }
-
-  if (genResult) {
-    const primaryName = efFiles[0]?.data?.projectName || 'ABAP'
-    return (
-      <>
-        <div style={{
-          marginBottom: 12, padding: '9px 14px', borderRadius: 4, fontSize: 12,
-          background: '#f3faf5', border: '1px solid #c3e6cb', color: '#107e3e',
-          display: 'flex', alignItems: 'center', gap: 8
-        }}>
-          <span style={{
-            width: 16, height: 16, borderRadius: '50%', background: '#107e3e',
-            color: '#fff', fontSize: 10, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
-          }}>✓</span>
-          Código gerado e salvo automaticamente.
-          {genSavedPath && <span style={{ color: 'var(--sap-subtle)' }}>Arquivos locais: <strong>{genSavedPath}</strong></span>}
-        </div>
-        <ResultContent result={genResult} programName={primaryName} providers={providers} />
-      </>
-    )
   }
 
   return (
@@ -1412,8 +1429,7 @@ const DEFAULT_FORM = {
   cds_fields: [], cds_associations: []
 }
 
-function CreateModal({ onClose, onSaved, user, providers }) {
-  const { saveProgram } = useAbapStore()
+function CreateModal({ onClose, onStartGenerate, user, providers }) {
   const { sapVersion } = useAiStore()
   const { getFlowPrompt } = useAgentStore()
   const { getSkillsForType } = useSkillsStore()
@@ -1429,12 +1445,6 @@ function CreateModal({ onClose, onSaved, user, providers }) {
   const [efFiles, setEfFiles] = useState([])      // array de { data, fileName, attachedPrograms, images, rawText }
   const [efStep, setEfStep] = useState('upload')  // 'upload' | 'review'
 
-  // Estado comum (geração)
-  const [generating, setGenerating] = useState(false)
-  const [genError, setGenError] = useState(null)
-  const [genResult, setGenResult] = useState(null)
-  const [genSavedPath, setGenSavedPath] = useState(null)
-
   const update = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const steps = STEPS_BY_TYPE[form.type] || STEPS_BY_TYPE.REPORT
   const totalSteps = steps.length
@@ -1447,24 +1457,7 @@ function CreateModal({ onClose, onSaved, user, providers }) {
   const removeEfFile = (idx) => setEfFiles(prev => prev.filter((_, i) => i !== idx))
   const updateEfFile = (idx, updater) => setEfFiles(prev => prev.map((f, i) => i === idx ? updater(f) : f))
 
-  // ── Save helpers ────────────────────────────────────────────────────────────
-  const saveEfResult = async (parsed, savedPath) => {
-    const primary = efFiles[0] || {}
-    const name = primary.data?.projectName || primary.data?.titulo || 'EF_PROGRAM'
-    const description = primary.data?.descricaoResumida || primary.data?.titulo || ''
-    const metaSafe = efFiles.map(({ images: _imgs, ...rest }) => rest)
-    const res = await saveProgram({
-      name,
-      type: parsed?.files?.[0]?.type || 'REPORT',
-      description,
-      metadata: { efFiles: metaSafe, savedPath },
-      result: parsed
-    })
-    if (res.success) onSaved?.()
-    return res
-  }
-
-  // Builds combined EF prompt from all loaded EF files
+  // ── Builds combined EF prompt ───────────────────────────────────────────────
   const buildCombinedEfPrompt = () => {
     if (efFiles.length === 1) return buildEfPrompt(efFiles[0], sapVersion)
     let p = `GERAR CÓDIGO ABAP A PARTIR DE ${efFiles.length} ESPECIFICAÇÕES FUNCIONAIS\n\n`
@@ -1488,74 +1481,35 @@ function CreateModal({ onClose, onSaved, user, providers }) {
     return p
   }
 
-  // ── Geração ─────────────────────────────────────────────────────────────────
-  const handleGenerate = async () => {
+  // ── Geração: coleta config e delega para AbapView ───────────────────────────
+  const handleGenerate = () => {
     const active = getActiveProvider(providers)
     if (!active) return
-    setGenerating(true)
-    setGenError(null)
-    setGenResult(null)
-    setGenSavedPath(null)
-    try {
-      const userPrompt = mode === 'ef' ? buildCombinedEfPrompt() : buildAbapPrompt(form, sapVersion)
-      const programName = mode === 'ef'
-        ? (efFiles[0]?.data?.projectName || 'ABAP_EF')
-        : (form.name || 'ABAP_PROGRAM')
-      const images = []
-
-      // Build system prompt: agent + skills associated with the current object type
-      const objectType = mode === 'ef' ? 'EF' : form.type
-      const skillsContext = getSkillsForType(objectType)
-      const systemPrompt = getFlowPrompt('abap') + skillsContext
-
-      let rawText
-
-      if (active.isIntegration) {
-        const res = await window.api.generateIntegration({
-          integrationType: active.integrationType,
-          systemPrompt,
-          userMessage: userPrompt,
-          programName,
-          images
-        })
-        if (!res.success) throw new Error(res.error)
-        rawText = res.content
-        if (res.savedTo) setGenSavedPath(res.savedTo)
-      } else {
-        rawText = await callAI(active, systemPrompt, userPrompt, images)
-      }
-
-      const parsed = parseJSONResponse(rawText)
-      setGenResult(parsed)
-      notify('✓ Código ABAP gerado', `${parsed?.files?.length ?? 0} arquivo(s) gerado(s) — ${programName}`)
-
-      // Auto-save no banco após geração no modo EF
-      if (mode === 'ef') {
-        saveEfResult(parsed, genSavedPath)
-      }
-    } catch (err) {
-      setGenError(err.message)
-    } finally {
-      setGenerating(false)
-    }
-  }
-
-  const handleSave = async () => {
-    if (!genResult) return
-    const name = form.name || 'SEM_NOME'
-    const res = await saveProgram({
-      name,
-      type: form.type,
-      description: form.description || form.context?.slice(0, 100) || '',
-      metadata: form,
-      result: genResult
-    })
-    if (res.success) {
-      onSaved?.()
-      onClose()
-    } else {
-      setGenError(`Erro ao salvar: ${res.error}`)
-    }
+    const userPrompt = mode === 'ef' ? buildCombinedEfPrompt() : buildAbapPrompt(form, sapVersion)
+    const programName = mode === 'ef'
+      ? (efFiles[0]?.data?.projectName || 'ABAP_EF')
+      : (form.name || 'ABAP_PROGRAM')
+    const objectType = mode === 'ef' ? 'EF' : form.type
+    const skillsContext = getSkillsForType(objectType)
+    const systemPrompt = getFlowPrompt('abap') + skillsContext
+    const images = (mode === 'ef' ? efFiles.flatMap(ef => ef.images || []) : [])
+    const saveMeta = mode === 'ef'
+      ? {
+          name: efFiles[0]?.data?.projectName || efFiles[0]?.data?.titulo || 'EF_PROGRAM',
+          type: 'REPORT',
+          description: efFiles[0]?.data?.descricaoResumida || efFiles[0]?.data?.titulo || '',
+          metadata: { efFiles: efFiles.map(({ images: _i, ...rest }) => rest) },
+          isEf: true
+        }
+      : {
+          name: form.name || 'SEM_NOME',
+          type: form.type,
+          description: form.description || form.context?.slice(0, 100) || '',
+          metadata: form,
+          isEf: false
+        }
+    onStartGenerate({ active, systemPrompt, userPrompt, programName, images, saveMeta })
+    onClose()
   }
 
   // ── Render: tela inicial ────────────────────────────────────────────────────
@@ -1649,8 +1603,7 @@ function CreateModal({ onClose, onSaved, user, providers }) {
       case 'Gerar': return (
         <StepGenerate
           form={form} providers={providers}
-          generating={generating} genError={genError} genResult={genResult}
-          genSavedPath={genSavedPath}
+          generating={false} genError={null}
           sapVersion={sapVersion}
           onGenerate={handleGenerate}
         />
@@ -1805,8 +1758,7 @@ function CreateModal({ onClose, onSaved, user, providers }) {
                 onRemoveFile={removeEfFile}
                 onUpdateFile={updateEfFile}
                 providers={providers}
-                generating={generating} genError={genError}
-                genResult={genResult} genSavedPath={genSavedPath}
+                generating={false} genError={null}
                 onGenerate={handleGenerate}
               />
             )}
@@ -1827,14 +1779,9 @@ function CreateModal({ onClose, onSaved, user, providers }) {
           }}>Cancelar</button>
 
           {/* Botão voltar à tela inicial */}
-          {mode !== null && !genResult && (
+          {mode !== null && (
             <button onClick={() => {
-              setMode(null)
-              setEfFiles([])
-              setEfStep('upload')
-              setStep(0)
-              setGenError(null)
-              setGenResult(null)
+              setMode(null); setEfFiles([]); setEfStep('upload'); setStep(0)
             }} style={{
               padding: '7px 18px', fontSize: 13, background: 'transparent',
               border: '1px solid var(--sap-border)', borderRadius: 4,
@@ -1862,28 +1809,6 @@ function CreateModal({ onClose, onSaved, user, providers }) {
               Próximo ›
             </button>
           )}
-
-          {/* EF: salvo automaticamente — botão apenas para fechar */}
-          {mode === 'ef' && genResult && (
-            <button onClick={onClose} style={{
-              padding: '7px 22px', fontSize: 13, fontWeight: 600,
-              background: '#107e3e', color: '#fff',
-              border: 'none', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit'
-            }}>
-              Fechar
-            </button>
-          )}
-
-          {/* Manual: salvar explícito */}
-          {mode === 'manual' && isLastStep && genResult && (
-            <button onClick={handleSave} style={{
-              padding: '7px 22px', fontSize: 13, fontWeight: 600,
-              background: '#107e3e', color: '#fff',
-              border: 'none', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit'
-            }}>
-              Salvar
-            </button>
-          )}
         </div>
       </div>
     </div>
@@ -1894,7 +1819,8 @@ function CreateModal({ onClose, onSaved, user, providers }) {
 
 function ResultModal({ program, onClose }) {
   if (!program) return null
-  const result = typeof program.result === 'string' ? JSON.parse(program.result) : program.result
+  let result = program.result
+  if (typeof result === 'string') { try { result = JSON.parse(result) } catch { result = null } }
 
   return (
     <div style={{
@@ -2019,16 +1945,272 @@ function ProgramCard({ program, onView, onDelete }) {
   )
 }
 
+// ─── FileBlock — arquivo ABAP com highlight e copy ────────────────────────────
+
+function FileBlock({ file }) {
+  const [open, setOpen] = useState(true)
+  const [copied, setCopied] = useState(false)
+  const color = TYPE_COLORS[file.type] || '#6a6d70'
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(file.content || '')
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1600)
+  }
+
+  return (
+    <div style={{ border: '1px solid var(--sap-border)', borderRadius: 6, overflow: 'hidden', marginBottom: 14 }}>
+      {/* File header */}
+      <div
+        onClick={() => setOpen(o => !o)}
+        style={{
+          padding: '10px 16px', background: 'var(--sap-bg)',
+          borderBottom: open ? '1px solid var(--sap-border)' : 'none',
+          display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer'
+        }}
+      >
+        <span style={{
+          fontSize: 10, fontWeight: 700, color: '#fff',
+          background: color, padding: '2px 7px', borderRadius: 3, flexShrink: 0
+        }}>{file.type}</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--sap-text)', fontFamily: 'monospace' }}>
+          {file.name}
+        </span>
+        {file.description && (
+          <span style={{ fontSize: 12, color: 'var(--sap-subtle)', marginLeft: 4, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            — {file.description}
+          </span>
+        )}
+        <button
+          onClick={e => { e.stopPropagation(); handleCopy() }}
+          style={{
+            fontSize: 11, color: 'var(--sap-subtle)', background: 'transparent',
+            border: '1px solid var(--sap-border)', borderRadius: 3, padding: '2px 8px',
+            cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0
+          }}
+        >{copied ? '✓' : 'Copiar'}</button>
+        <span style={{ color: 'var(--sap-subtle)', fontSize: 11, flexShrink: 0 }}>{open ? '▲' : '▼'}</span>
+      </div>
+      {open && <AbapHighlight code={file.content || ''} />}
+    </div>
+  )
+}
+
+// ─── AbapResultPanel — resultado de geração ao estilo DtecView ────────────────
+
+function AbapResultPanel({ genRaw, genResult, genError, onSave, onNova, saving }) {
+  const [copiedAll, setCopiedAll] = useState(false)
+
+  const files = genResult?.files || []
+  const primaryFile = files[0]
+  const typeBadgeColor = TYPE_COLORS[primaryFile?.type] || '#6a6d70'
+
+  const handleCopyAll = () => {
+    const allCode = files.map(f => `*--- ${f.name} (${f.type}) ---\n${f.content}`).join('\n\n')
+    navigator.clipboard.writeText(allCode || genRaw || '')
+    setCopiedAll(true)
+    setTimeout(() => setCopiedAll(false), 1800)
+  }
+
+  const infoItems = [
+    genResult?.approach && { label: 'Abordagem', value: genResult.approach },
+    genResult?.alv_approach && genResult.alv_approach !== 'none' && { label: 'ALV', value: genResult.alv_approach },
+    genResult?.transport_order_type && { label: 'Transporte', value: genResult.transport_order_type },
+  ].filter(Boolean)
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+      {/* Toolbar */}
+      <div style={{
+        padding: '10px 24px', borderBottom: '1px solid var(--sap-border)',
+        background: 'var(--sap-base)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0
+      }}>
+        {primaryFile && (
+          <span style={{
+            fontSize: 10, fontWeight: 700, color: '#fff',
+            background: typeBadgeColor, padding: '2px 7px', borderRadius: 3
+          }}>{primaryFile.type}</span>
+        )}
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--sap-text)', fontFamily: 'monospace' }}>
+          {primaryFile?.name || 'Resultado ABAP'}
+        </span>
+        {files.length > 1 && (
+          <span style={{ fontSize: 12, color: 'var(--sap-subtle)' }}>
+            +{files.length - 1} arquivo(s)
+          </span>
+        )}
+        <div style={{ flex: 1 }} />
+        <button onClick={handleCopyAll} style={{
+          fontSize: 12, color: 'var(--sap-primary)', background: 'transparent',
+          border: '1px solid var(--sap-primary)', borderRadius: 4, padding: '5px 12px',
+          cursor: 'pointer', fontFamily: 'inherit'
+        }}>{copiedAll ? '✓ Copiado' : 'Copiar tudo'}</button>
+        <button onClick={onNova} style={{
+          fontSize: 12, color: 'var(--sap-text)', background: 'transparent',
+          border: '1px solid var(--sap-border)', borderRadius: 4, padding: '5px 12px',
+          cursor: 'pointer', fontFamily: 'inherit'
+        }}>Nova Geração</button>
+        <button onClick={onSave} disabled={saving} style={{
+          fontSize: 12, fontWeight: 600, color: '#fff',
+          background: saving ? 'var(--sap-border)' : '#107e3e',
+          border: 'none', borderRadius: 4, padding: '5px 18px',
+          cursor: saving ? 'not-allowed' : 'pointer', fontFamily: 'inherit'
+        }}>{saving ? 'Salvando...' : 'Salvar'}</button>
+      </div>
+
+      {/* Content */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '24px 28px' }}>
+        {genError && (
+          <div style={{ padding: '12px 16px', background: '#fff8f6', border: '1px solid #f5c6bc', borderRadius: 6, color: '#bb0000', fontSize: 13, marginBottom: 20 }}>
+            <strong>Erro na geração:</strong> {genError}
+          </div>
+        )}
+
+        {/* Análise */}
+        {genResult?.analysis && (
+          <div style={{ marginBottom: 20, padding: '14px 18px', background: 'var(--sap-bg)', border: '1px solid var(--sap-border)', borderRadius: 6 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--sap-subtle)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 8 }}>
+              Análise
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--sap-text)', lineHeight: 1.7 }}>
+              {genResult.analysis}
+            </div>
+          </div>
+        )}
+
+        {/* Info row: abordagem, ALV, transporte */}
+        {infoItems.length > 0 && (
+          <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
+            {infoItems.map(item => (
+              <div key={item.label} style={{
+                padding: '6px 14px', background: 'var(--sap-bg)',
+                border: '1px solid var(--sap-border)', borderRadius: 4,
+                display: 'flex', alignItems: 'center', gap: 8
+              }}>
+                <span style={{ fontSize: 11, color: 'var(--sap-subtle)', textTransform: 'uppercase', fontWeight: 600 }}>{item.label}</span>
+                <span style={{ fontSize: 12, color: 'var(--sap-text)', fontWeight: 600, fontFamily: 'monospace' }}>{item.value}</span>
+              </div>
+            ))}
+            {Array.isArray(genResult?.dependencies) && genResult.dependencies.length > 0 && (
+              <div style={{ padding: '6px 14px', background: 'var(--sap-bg)', border: '1px solid var(--sap-border)', borderRadius: 4, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 11, color: 'var(--sap-subtle)', textTransform: 'uppercase', fontWeight: 600 }}>Tabelas</span>
+                {genResult.dependencies.slice(0, 8).map(d => (
+                  <span key={d} style={{ fontSize: 11, color: 'var(--sap-primary)', fontFamily: 'monospace', background: 'var(--sap-primary)0f', padding: '1px 6px', borderRadius: 3 }}>{d}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Arquivos com código */}
+        {files.length > 0 ? (
+          <>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--sap-subtle)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 12 }}>
+              Arquivos gerados ({files.length})
+            </div>
+            {files.map((file, i) => <FileBlock key={i} file={file} />)}
+          </>
+        ) : !genError && (
+          <div style={{ color: 'var(--sap-subtle)', fontSize: 13, fontStyle: 'italic', textAlign: 'center', paddingTop: 40 }}>
+            Nenhum arquivo encontrado na resposta.
+          </div>
+        )}
+
+        {/* Notas */}
+        {genResult?.notes && (
+          <div style={{ marginTop: 16, padding: '12px 16px', background: '#fffbea', border: '1px solid #ffe066', borderRadius: 6 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#7a6a00', textTransform: 'uppercase', marginBottom: 6 }}>Notas</div>
+            <div style={{ fontSize: 13, color: '#4a3f00', lineHeight: 1.65, whiteSpace: 'pre-wrap' }}>{genResult.notes}</div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Main View ─────────────────────────────────────────────────────────────────
 
 export default function AbapView() {
-  const { programs, loading, loadPrograms, deleteProgram } = useAbapStore()
+  const { programs, loading, loadPrograms, deleteProgram, saveProgram } = useAbapStore()
   const { providers, loadProviders } = useAiStore()
   const { user } = useAuthStore()
   const [showCreate, setShowCreate] = useState(false)
   const [viewProgram, setViewProgram] = useState(null)
   const [search, setSearch] = useState('')
   const [filterType, setFilterType] = useState('ALL')
+
+  // ── Geração centralizada ─────────────────────────────────────────────────────
+  const [genPhase, setGenPhase] = useState(null) // null | 'generating' | 'result'
+  const [genRaw, setGenRaw] = useState('')
+  const [genResult, setGenResult] = useState(null)
+  const [genError, setGenError] = useState(null)
+  const [pendingMeta, setPendingMeta] = useState(null)
+  const [saving, setSaving] = useState(false)
+
+  const handleStartGenerate = async ({ active, systemPrompt, userPrompt, programName, images, saveMeta }) => {
+    setGenPhase('generating')
+    setGenRaw('')
+    setGenResult(null)
+    setGenError(null)
+    setPendingMeta(saveMeta)
+    try {
+      let rawText
+      if (active.isIntegration) {
+        const res = await window.api.generateIntegration({
+          integrationType: active.integrationType,
+          systemPrompt,
+          userMessage: userPrompt,
+          programName,
+          images
+        })
+        if (!res.success) throw new Error(res.error)
+        rawText = res.content
+      } else {
+        rawText = await callAI(active, systemPrompt, userPrompt, images)
+      }
+      const parsed = parseAbapResponse(rawText)
+      setGenRaw(rawText)
+      setGenResult(parsed)
+      notify('✓ Código ABAP gerado', `${parsed?.files?.length ?? 0} arquivo(s) — ${programName}`)
+    } catch (err) {
+      setGenError(err.message)
+    } finally {
+      setGenPhase('result')
+    }
+  }
+
+  const handleSaveResult = async () => {
+    if (!pendingMeta) return
+    setSaving(true)
+    try {
+      const res = await saveProgram({
+        name: pendingMeta.name,
+        type: pendingMeta.type,
+        description: pendingMeta.description,
+        metadata: pendingMeta.metadata,
+        result: genResult
+      })
+      if (res.success) {
+        loadPrograms()
+        setGenPhase(null)
+        setGenRaw('')
+        setGenResult(null)
+        setPendingMeta(null)
+        notify('✓ Salvo', pendingMeta.name)
+      }
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleNovaGeracao = () => {
+    setGenPhase(null)
+    setGenRaw('')
+    setGenResult(null)
+    setGenError(null)
+    setPendingMeta(null)
+    setShowCreate(true)
+  }
 
   useEffect(() => {
     loadPrograms()
@@ -2061,23 +2243,25 @@ export default function AbapView() {
         <div>
           <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--sap-text)' }}>ABAP Development</div>
           <div style={{ fontSize: 12, color: 'var(--sap-subtle)', marginTop: 1 }}>
-            Criação de objetos ABAP assistida por IA
+            {genPhase === 'generating' ? 'Gerando código...' : genPhase === 'result' ? 'Revisão do código gerado' : 'Criação de objetos ABAP assistida por IA'}
           </div>
         </div>
-        <button
-          onClick={() => setShowCreate(true)}
-          style={{
-            marginLeft: 'auto', padding: '8px 20px', fontSize: 13, fontWeight: 600,
-            background: 'var(--sap-primary)', color: '#fff',
-            border: 'none', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit'
-          }}
-        >
-          + Novo Código
-        </button>
+        {genPhase === null && (
+          <button
+            onClick={() => setShowCreate(true)}
+            style={{
+              marginLeft: 'auto', padding: '8px 20px', fontSize: 13, fontWeight: 600,
+              background: 'var(--sap-primary)', color: '#fff',
+              border: 'none', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit'
+            }}
+          >
+            + Novo Código
+          </button>
+        )}
       </div>
 
-      {/* Filters */}
-      <div style={{
+      {/* Filters — only in list mode */}
+      {genPhase === null && <div style={{
         padding: '12px 24px', borderBottom: '1px solid var(--sap-border)',
         background: 'var(--sap-base)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0
       }}>
@@ -2103,57 +2287,83 @@ export default function AbapView() {
         <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--sap-subtle)' }}>
           {filtered.length} {filtered.length === 1 ? 'objeto' : 'objetos'}
         </span>
-      </div>
+      </div>}
 
-      {/* List */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
-        {loading ? (
-          <div style={{ textAlign: 'center', color: 'var(--sap-subtle)', paddingTop: 60, fontSize: 14 }}>
-            Carregando...
-          </div>
-        ) : filtered.length === 0 ? (
-          <div style={{
-            textAlign: 'center', paddingTop: 60, color: 'var(--sap-subtle)',
-            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12
-          }}>
+      {/* Generating animation — full panel */}
+      {genPhase === 'generating' && (
+        <div style={{
+          flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          flexDirection: 'column', gap: 32
+        }}>
+          <GeneratingAnimation type="abap" />
+        </div>
+      )}
+
+      {/* Result panel */}
+      {genPhase === 'result' && (
+        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <AbapResultPanel
+            genRaw={genRaw}
+            genResult={genResult}
+            genError={genError}
+            saving={saving}
+            onSave={handleSaveResult}
+            onNova={handleNovaGeracao}
+          />
+        </div>
+      )}
+
+      {/* Programs list */}
+      {genPhase === null && (
+        <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
+          {loading ? (
+            <div style={{ textAlign: 'center', color: 'var(--sap-subtle)', paddingTop: 60, fontSize: 14 }}>
+              Carregando...
+            </div>
+          ) : filtered.length === 0 ? (
             <div style={{
-              width: 48, height: 48, border: '2px dashed var(--sap-border)',
-              borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 22, color: 'var(--sap-border)'
-            }}>◈</div>
-            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--sap-text)' }}>
-              {search || filterType !== 'ALL' ? 'Nenhum resultado encontrado' : 'Nenhum código criado'}
+              textAlign: 'center', paddingTop: 60, color: 'var(--sap-subtle)',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12
+            }}>
+              <div style={{
+                width: 48, height: 48, border: '2px dashed var(--sap-border)',
+                borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 22, color: 'var(--sap-border)'
+              }}>◈</div>
+              <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--sap-text)' }}>
+                {search || filterType !== 'ALL' ? 'Nenhum resultado encontrado' : 'Nenhum código criado'}
+              </div>
+              <div style={{ fontSize: 13 }}>
+                {search || filterType !== 'ALL'
+                  ? 'Tente ajustar os filtros de busca'
+                  : 'Clique em "Novo Código" para começar'}
+              </div>
             </div>
-            <div style={{ fontSize: 13 }}>
-              {search || filterType !== 'ALL'
-                ? 'Tente ajustar os filtros de busca'
-                : 'Clique em "Novo Código" para começar'}
+          ) : (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+              gap: 12
+            }}>
+              {filtered.map(p => (
+                <ProgramCard
+                  key={p.id}
+                  program={p}
+                  onView={() => setViewProgram(p)}
+                  onDelete={() => deleteProgram(p.id)}
+                />
+              ))}
             </div>
-          </div>
-        ) : (
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
-            gap: 12
-          }}>
-            {filtered.map(p => (
-              <ProgramCard
-                key={p.id}
-                program={p}
-                onView={() => setViewProgram(p)}
-                onDelete={() => deleteProgram(p.id)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
       {showCreate && (
         <CreateModal
           user={user}
           providers={providers}
           onClose={() => setShowCreate(false)}
-          onSaved={() => loadPrograms()}
+          onStartGenerate={handleStartGenerate}
         />
       )}
 

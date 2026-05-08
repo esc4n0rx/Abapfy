@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useEspecificacoesStore } from '../store/especificacoesStore'
 import { useAiStore } from '../store/aiStore'
 import { useAuthStore } from '../store/authStore'
-import { getActiveProvider, parseJSONResponse } from '../lib/aiClient'
+import { getActiveProvider, parseEfResponse, parseEffortResponse } from '../lib/aiClient'
 import { useAgentStore } from '../store/agentStore'
 import { notify } from '../lib/notify'
 
@@ -230,7 +230,7 @@ export default function EspecificacoesView() {
         raw = res.content
       }
 
-      const parsed = parseJSONResponse(raw)
+      const parsed = parseEfResponse(raw)
       setGeneratedContent(parsed)
       notify('📋 Especificação gerada', parsed.project_name || 'Conteúdo pronto para revisão')
     } catch (err) {
@@ -585,7 +585,7 @@ function EffortSection({ content }) {
         if (!res.success) throw new Error(res.error)
         raw = res.content
       }
-      setEffort(parseJSONResponse(raw))
+      setEffort(parseEffortResponse(raw))
     } catch (e) { setErr(e.message) }
     finally { setLoading(false) }
   }

@@ -120,7 +120,15 @@
       "Bash(Get-ChildItem *)",
       "Bash(gh api *)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(dir \"C:\\\\Users\\\\paulo.oliveira\\\\Desktop\\\\Nova pasta \\(4\\)\\\\src\\\\renderer\\\\src\\\\views\")"
+      "Bash(dir \"C:\\\\Users\\\\paulo.oliveira\\\\Desktop\\\\Nova pasta \\(4\\)\\\\src\\\\renderer\\\\src\\\\views\")",
+      "Bash(dir \"C:\\\\Users\\\\paulo.oliveira\\\\Desktop\\\\Nova pasta \\(4\\)\\\\src\\\\renderer\\\\src\\\\skills\" /s /b)",
+      "Bash(where gh *)",
+      "Bash(Get-Command gh *)",
+      "PowerShell(Get-Command *)",
+      "Bash(git fetch *)",
+      "Bash(Select-Object FullName)",
+      "PowerShell(Get-Content \"C:\\\\Users\\\\paulo.oliveira\\\\Desktop\\\\Nova pasta \\(4\\)\\\\debug\\\\abap_response.txt\" -Raw | Select-String -Pattern \".\" | Select-Object -First 1 | ForEach-Object { $_.Line.Substring\\(0, [Math]::Min\\(2000, $_.Line.Length\\)\\) })",
+      "Bash(del test_parser.js test_parser2.js test_parser3.js test_parser4.js)"
     ]
   }
 }

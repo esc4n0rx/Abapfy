@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useAiStore } from '../store/aiStore'
-import { getActiveProvider, parseJSONResponse } from '../lib/aiClient'
+import { getActiveProvider, parsePerformanceResponse } from '../lib/aiClient'
 import { useAgentStore } from '../store/agentStore'
 import AbapHighlight from '../components/AbapHighlight'
 
@@ -196,7 +196,7 @@ export default function PerformanceView() {
         if (!res.success) throw new Error(res.error)
         raw = res.content
       }
-      const parsed = parseJSONResponse(raw)
+      const parsed = parsePerformanceResponse(raw)
       setResult(parsed)
       // Pré-selecionar todos os fixes disponíveis
       const initial = {}
