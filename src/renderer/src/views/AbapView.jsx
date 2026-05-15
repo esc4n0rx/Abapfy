@@ -794,8 +794,6 @@ function FileCard({ file }) {
   )
 }
 
-const MAX_FIX_ATTEMPTS = 5
-
 // Componentes markdown para renderização de respostas não-JSON do ABAP
 const abapMdComponents = {
   h1: ({ children }) => <h1 style={{ fontSize: 17, fontWeight: 700, color: 'var(--sap-text)', margin: '18px 0 8px', borderBottom: '2px solid var(--sap-border)', paddingBottom: 6 }}>{children}</h1>,
@@ -843,16 +841,9 @@ function MarkdownResult({ markdown }) {
   )
 }
 
-function ResultContent({ result, programName, providers }) {
-  const { getFlowPrompt } = useAgentStore()
+function ResultContent({ result }) {
   const [copiedAll, setCopiedAll] = useState(false)
-  // currentResult pode ser atualizado pelo loop de auto-correção
-  const [currentResult, setCurrentResult] = useState(result)
-  const [autoFix, setAutoFix] = useState(false)
-  const [validating, setValidating] = useState(false)
-  const [statusMsg, setStatusMsg] = useState('')
-  const [fixLog, setFixLog] = useState([])       // [{attempt, erros, fixed}]
-  const [validateResult, setValidateResult] = useState(null)
+  const [currentResult] = useState(result)
 
   const copyAll = () => {
     const all = (currentResult.files || []).map(f =>
@@ -863,87 +854,14 @@ function ResultContent({ result, programName, providers }) {
     setTimeout(() => setCopiedAll(false), 1800)
   }
 
-  const handleValidate = async () => {
-    if (!window.api?.validateAbap) return
-    setValidating(true)
-    setValidateResult(null)
-    setFixLog([])
-
-    const active = autoFix ? getActiveProvider(providers) : null
-    let files = currentResult.files || []
-    let lastRes = null
-
-    for (let attempt = 1; attempt <= MAX_FIX_ATTEMPTS; attempt++) {
-      // ── 1. Valida no SAP ──────────────────────────────────────────────────
-      setStatusMsg(attempt === 1 ? 'Validando no SAP...' : `Revalidando no SAP (tentativa ${attempt}/${MAX_FIX_ATTEMPTS})...`)
-      let res
-      try {
-        res = await window.api.validateAbap({ files, programName: programName || 'ZVALIDATE_TMP' })
-      } catch (err) {
-        lastRes = { success: false, error: err.message }
-        break
-      }
-      lastRes = res
-
-      const erros = res.result?.erros || []
-
-      // ── 2. Se ok ou sem auto-correção, encerra ────────────────────────────
-      if (res.result?.sucesso || !autoFix || !active || erros.length === 0) break
-
-      // ── 3. Auto-correção: envia erros + código ao modelo ──────────────────
-      setFixLog(prev => [...prev, { attempt, erros, fixed: false }])
-      setStatusMsg(`Corrigindo com IA (tentativa ${attempt}/${MAX_FIX_ATTEMPTS})...`)
-
-      const errorText = erros.map(e => `  [${e.tipo}] Linha ${e.linha}: ${e.texto}`).join('\n')
-      const codigoAtual = files.map(f => `=== ${f.type}: ${f.name} ===\n${f.content}`).join('\n\n')
-      const fixPrompt =
-        `Corrija os erros de sintaxe ABAP abaixo identificados pelo SAP SE38.\n` +
-        `Retorne APENAS o JSON com os arquivos corrigidos (mesmo formato da geração original).\n\n` +
-        `ERROS (tentativa ${attempt}/${MAX_FIX_ATTEMPTS}):\n${errorText}\n\n` +
-        `CÓDIGO ATUAL:\n${codigoAtual}`
-
-      try {
-        let rawText
-        if (active.isIntegration) {
-          const r = await window.api.generateIntegration({
-            integrationType: active.integrationType,
-            systemPrompt: getFlowPrompt('abap'),
-            userMessage: fixPrompt,
-            programName: programName || 'ZFIX'
-          })
-          if (!r.success) break
-          rawText = r.content
-        } else {
-          rawText = await callAI(active, getFlowPrompt('abap'), fixPrompt)
-        }
-        const parsed = parseAbapResponse(rawText)
-        if (parsed?.files?.length) {
-          files = parsed.files
-          setCurrentResult(parsed)
-          setFixLog(prev => prev.map((l, i) => i === prev.length - 1 ? { ...l, fixed: true } : l))
-        }
-      } catch {
-        break
-      }
-    }
-
-    setValidateResult(lastRes)
-    setStatusMsg('')
-    setValidating(false)
-  }
-
-  // Fallback: modelo retornou markdown em vez de JSON estruturado
   if (currentResult._markdown) {
     return <MarkdownResult markdown={currentResult._markdown} />
   }
 
-  const canValidate = !!window.api?.validateAbap && (currentResult.files?.length || 0) > 0
-  const hasProviders = providers && getActiveProvider(providers) != null
-
   return (
     <div>
       {/* ── Cabeçalho: contagem + botões ───────────────────────────────────── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: canValidate ? 8 : 16, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: '#107e3e', display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{
             width: 18, height: 18, borderRadius: '50%', background: '#107e3e',
@@ -951,26 +869,6 @@ function ResultContent({ result, programName, providers }) {
           }}>✓</span>
           {currentResult.files?.length || 0} arquivo(s) gerado(s)
         </div>
-
-        {canValidate && (
-          <button onClick={handleValidate} disabled={validating} style={{
-            fontSize: 12, color: validating ? 'var(--sap-subtle)' : '#e8a000',
-            background: 'transparent',
-            border: '1px solid ' + (validating ? 'var(--sap-border)' : '#e8a000'),
-            borderRadius: 4, padding: '4px 14px', cursor: validating ? 'not-allowed' : 'pointer',
-            fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 6
-          }}>
-            {validating && (
-              <span style={{
-                width: 10, height: 10, border: '1.5px solid rgba(232,160,0,0.3)',
-                borderTop: '1.5px solid #e8a000', borderRadius: '50%',
-                animation: 'spin 0.8s linear infinite', display: 'inline-block'
-              }} />
-            )}
-            {validating ? statusMsg : 'Validar no SAP'}
-          </button>
-        )}
-
         <button onClick={copyAll} style={{
           marginLeft: 'auto', fontSize: 12,
           color: copiedAll ? '#107e3e' : 'var(--sap-primary)',
@@ -981,100 +879,6 @@ function ResultContent({ result, programName, providers }) {
           {copiedAll ? 'Copiado!' : 'Copiar todos'}
         </button>
       </div>
-
-      {/* ── Aviso SAP + toggle auto-correção ───────────────────────────────── */}
-      {canValidate && !validating && !validateResult && (
-        <div style={{
-          marginBottom: 14, padding: '9px 12px', borderRadius: 4,
-          background: '#fffbf0', border: '1px solid #ffe0b2',
-          display: 'flex', alignItems: 'flex-start', gap: 10
-        }}>
-          <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>⚠️</span>
-          <div style={{ fontSize: 12, color: '#7c4400', flex: 1 }}>
-            <strong>Pré-requisito:</strong> certifique-se de estar logado em um ambiente SAP de <strong>desenvolvimento</strong> antes de validar.
-            {hasProviders && (
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, cursor: 'pointer', userSelect: 'none' }}>
-                <input
-                  type="checkbox"
-                  checked={autoFix}
-                  onChange={e => setAutoFix(e.target.checked)}
-                  style={{ cursor: 'pointer' }}
-                />
-                <span>Corrigir automaticamente com IA em caso de erros (até {MAX_FIX_ATTEMPTS} tentativas)</span>
-              </label>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ── Log de iterações de auto-correção ──────────────────────────────── */}
-      {fixLog.length > 0 && (
-        <div style={{ marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
-          {fixLog.map((entry, i) => (
-            <div key={i} style={{
-              fontSize: 12, padding: '5px 10px', borderRadius: 4,
-              background: entry.fixed ? '#f3faf5' : '#fff8f6',
-              border: '1px solid ' + (entry.fixed ? '#c3e6cb' : '#f5c6bc'),
-              color: entry.fixed ? '#107e3e' : '#bb0000'
-            }}>
-              {entry.fixed ? '✓' : '↻'} Tentativa {entry.attempt}: {entry.erros.length} erro(s) encontrado(s)
-              {entry.fixed ? ' — código corrigido pela IA' : ''}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* ── Painel de resultado da validação ───────────────────────────────── */}
-      {validateResult && (
-        <div style={{
-          marginBottom: 14, padding: '12px 14px', borderRadius: 4,
-          background: validateResult.success && validateResult.result?.sucesso ? '#f3faf5' : '#fff8f6',
-          border: '1px solid ' + (validateResult.success && validateResult.result?.sucesso ? '#c3e6cb' : '#f5c6bc')
-        }}>
-          {validateResult.success && validateResult.result ? (
-            <>
-              <div style={{
-                fontSize: 13, fontWeight: 600, marginBottom: validateResult.result.erros?.length ? 8 : 0,
-                color: validateResult.result.sucesso ? '#107e3e' : '#bb0000',
-                display: 'flex', alignItems: 'center', gap: 6
-              }}>
-                <span>{validateResult.result.sucesso ? '✓' : '✗'}</span>
-                {validateResult.result.mensagem}
-                {!validateResult.result.sucesso && autoFix && fixLog.length >= MAX_FIX_ATTEMPTS && (
-                  <span style={{ fontSize: 11, fontWeight: 400, color: '#bb0000' }}>
-                    — limite de {MAX_FIX_ATTEMPTS} correções atingido
-                  </span>
-                )}
-              </div>
-
-              {validateResult.result.erros?.length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
-                  {validateResult.result.erros.map((e, i) => (
-                    <div key={i} style={{
-                      fontSize: 12, fontFamily: 'monospace', padding: '4px 8px',
-                      background: 'rgba(187,0,0,0.06)', borderRadius: 3, color: '#bb0000'
-                    }}>
-                      <strong>[{e.tipo}]</strong> Linha {e.linha}: {e.texto}
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {validateResult.result.etapas && !validateResult.result.sucesso && (
-                <div style={{ fontSize: 11, color: 'var(--sap-subtle)', marginTop: 6 }}>
-                  {Object.entries(validateResult.result.etapas)
-                    .filter(([, v]) => !v.sucesso)
-                    .map(([k, v]) => <div key={k}>✗ {k}: {v.mensagem}</div>)}
-                </div>
-              )}
-            </>
-          ) : (
-            <div style={{ fontSize: 13, color: '#bb0000' }}>
-              <strong>Erro:</strong> {validateResult.error}
-            </div>
-          )}
-        </div>
-      )}
 
       {currentResult.analysis && (
         <div style={{
@@ -1109,6 +913,334 @@ function ResultContent({ result, programName, providers }) {
           <strong>Dependências:</strong> {currentResult.dependencies.join(', ')}
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── Error Fix Panel ───────────────────────────────────────────────────────────
+
+
+function FixStreamBubble({ text }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 20 }}>
+      <div style={{
+        width: '100%', padding: '14px 18px',
+        borderRadius: '2px 12px 12px 12px',
+        background: 'var(--sap-base)',
+        border: '1px solid var(--sap-primary, #0070f2)',
+        fontSize: 13
+      }}>
+        {text ? (
+          <div style={{ color: 'var(--sap-text)', lineHeight: 1.65 }}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={abapMdComponents}>
+              {text}
+            </ReactMarkdown>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--sap-subtle)' }}>
+            <span style={{
+              display: 'inline-block', width: 10, height: 10, borderRadius: '50%',
+              border: '2px solid var(--sap-primary, #0070f2)',
+              borderTopColor: 'transparent',
+              animation: 'spin 0.8s linear infinite', flexShrink: 0
+            }} />
+            <span style={{ fontSize: 13 }}>
+              Analisando<span style={{ animation: 'blink 1s step-end infinite' }}>...</span>
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function FixMessageBubble({ msg }) {
+  const isUser = msg.role === 'user'
+  if (isUser) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+        <div style={{
+          maxWidth: '72%', padding: '10px 14px',
+          borderRadius: '12px 12px 2px 12px',
+          background: 'var(--sap-primary, #0070f2)', color: '#fff',
+          fontSize: 13, lineHeight: 1.5, wordBreak: 'break-word',
+          whiteSpace: 'pre-wrap'
+        }}>
+          {msg.content}
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 20 }}>
+      <div style={{
+        width: '100%', padding: '16px 18px',
+        borderRadius: '2px 12px 12px 12px',
+        background: 'var(--sap-base)',
+        border: '1px solid var(--sap-border)',
+        fontSize: 13, lineHeight: 1.5
+      }}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={abapMdComponents}>
+          {msg.content}
+        </ReactMarkdown>
+      </div>
+    </div>
+  )
+}
+
+function buildFixSystemPrompt(basePrompt, files) {
+  let prompt = basePrompt
+  prompt += '\n\n---\nCÓDIGO DO PROGRAMA ABAP (contexto para correção de erros SE38):\n\n'
+  for (const f of files) {
+    prompt += `=== ${f.name} (${f.type}) ===\n${f.content}\n\n`
+  }
+  prompt += '---\nQuando o usuário informar erros:\n'
+  prompt += '- Retorne o bloco ANTIGO (com erro) e o bloco NOVO (corrigido)\n'
+  prompt += '- Não reenvie o código completo — apenas as alterações necessárias\n'
+  return prompt
+}
+
+function ErrorFixPanel({ files, programName, providers, onClose }) {
+  const { getFlowPrompt } = useAgentStore()
+  const [messages, setMessages] = useState([])
+  const [inputText, setInputText] = useState('')
+  const [streaming, setStreaming] = useState(false)
+  const [streamText, setStreamText] = useState('')
+  const [error, setError] = useState(null)
+
+  const messagesRef = useRef([])
+  const messagesEndRef = useRef(null)
+  const streamAccumRef = useRef('')
+  const textareaRef = useRef(null)
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages.length, streamText])
+
+  useEffect(() => {
+    return () => { window.api?.removeStreamListeners?.() }
+  }, [])
+
+  const updateMessages = (newMsgs) => {
+    messagesRef.current = newMsgs
+    setMessages(newMsgs)
+  }
+
+  const streamToModel = (apiMessages, systemPrompt, active) => {
+    setStreaming(true)
+    setStreamText('')
+    streamAccumRef.current = ''
+    window.api.removeStreamListeners()
+
+    window.api.onStreamChunk(({ text }) => {
+      streamAccumRef.current += text
+      setStreamText(streamAccumRef.current)
+    })
+
+    window.api.onStreamDone(() => {
+      const finalText = streamAccumRef.current
+      setStreaming(false)
+      setStreamText('')
+      streamAccumRef.current = ''
+      updateMessages([...messagesRef.current, { role: 'assistant', content: finalText }])
+      window.api.removeStreamListeners()
+    })
+
+    window.api.onStreamError(({ error: err }) => {
+      const partial = streamAccumRef.current
+      setStreaming(false)
+      setStreamText('')
+      streamAccumRef.current = ''
+      window.api.removeStreamListeners()
+      if (partial.trim()) {
+        updateMessages([...messagesRef.current, {
+          role: 'assistant',
+          content: partial + '\n\n---\n⚠️ **Resposta interrompida** — solicite continuar a partir do último ponto.'
+        }])
+      } else {
+        setError(`Erro: ${err}`)
+      }
+    })
+
+    const maxTokensMap = { claude: 16000, openai: 16384, groq: 8192, gemini: 16384 }
+    window.api.streamStart({
+      provider: active.provider,
+      apiKey: active.apiKey,
+      model: active.model,
+      systemPrompt,
+      messages: apiMessages,
+      maxTokens: maxTokensMap[active.provider] ?? 8192
+    })
+  }
+
+  const handleSend = async () => {
+    if (!inputText.trim() || streaming) return
+    const active = getActiveProvider(providers)
+    if (!active) { setError('Nenhum provedor de IA ativo. Configure em Configurações → IA.'); return }
+    setError(null)
+
+    const text = inputText.trim()
+    setInputText('')
+    textareaRef.current?.focus()
+
+    const userMsg = { role: 'user', content: text }
+    const newMessages = [...messagesRef.current, userMsg]
+    updateMessages(newMessages)
+
+    const systemPrompt = buildFixSystemPrompt(getFlowPrompt('editor'), files)
+    const apiMessages = newMessages.map(m => ({ role: m.role, content: m.content }))
+
+    if (active.isIntegration) {
+      setStreaming(true)
+      try {
+        const historyText = messagesRef.current
+          .map(m => `${m.role === 'user' ? 'Usuário' : 'Assistente'}: ${(m.content || '').slice(0, 800)}`)
+          .join('\n\n')
+        const prompt = historyText ? `**Histórico:**\n${historyText}\n\n**Nova mensagem:**\n${text}` : text
+        const res = await window.api.generateIntegration({
+          integrationType: active.integrationType,
+          systemPrompt,
+          userMessage: prompt,
+          programName: programName || 'ABAP_FIX'
+        })
+        updateMessages([...messagesRef.current, {
+          role: 'assistant',
+          content: res.success ? (res.content || '(sem resposta)') : `Erro: ${res.error}`
+        }])
+      } finally {
+        setStreaming(false)
+      }
+      return
+    }
+
+    streamToModel(apiMessages, systemPrompt, active)
+  }
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+    }}>
+      <div style={{
+        width: '90vw', maxWidth: 900, height: '88vh',
+        background: 'var(--sap-base)', borderRadius: 8,
+        boxShadow: '0 8px 40px rgba(0,0,0,0.28)',
+        display: 'flex', flexDirection: 'column', overflow: 'hidden'
+      }}>
+        {/* Header */}
+        <div style={{
+          padding: '14px 20px', borderBottom: '1px solid var(--sap-border)',
+          display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0
+        }}>
+          <span style={{
+            fontSize: 11, fontWeight: 700, color: '#fff',
+            background: '#bb2222', padding: '2px 8px', borderRadius: 3
+          }}>SE38</span>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--sap-text)' }}>
+              Corrigir Erros — {programName}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--sap-subtle)', marginTop: 1 }}>
+              Cole os erros da SE38 — o agente retorna apenas os blocos corrigidos
+            </div>
+          </div>
+          <div style={{ flex: 1 }} />
+          <button
+            onClick={onClose}
+            style={{
+              padding: '7px 20px', fontSize: 13, fontWeight: 600,
+              background: 'var(--sap-primary)', color: '#fff',
+              border: 'none', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit'
+            }}
+          >Finalizar</button>
+        </div>
+
+        {/* Error banner */}
+        {error && (
+          <div style={{
+            padding: '8px 20px', background: '#fff5f5',
+            borderBottom: '1px solid #ffd7d7', flexShrink: 0,
+            fontSize: 13, color: '#bb2222',
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+          }}>
+            <span>{error}</span>
+            <span onClick={() => setError(null)} style={{ cursor: 'pointer', fontWeight: 700, fontSize: 16 }}>✕</span>
+          </div>
+        )}
+
+        {/* Messages */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
+          {messages.length === 0 && !streaming && (
+            <div style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center',
+              justifyContent: 'center', gap: 12, padding: '48px 20px', textAlign: 'center'
+            }}>
+              <div style={{
+                width: 44, height: 44, borderRadius: '50%', background: 'rgba(187,34,34,0.1)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20
+              }}>⚠</div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--sap-text)' }}>
+                Pronto para corrigir
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--sap-subtle)', lineHeight: 1.7, maxWidth: 380 }}>
+                O código do programa <strong>({files.length} arquivo(s))</strong> já foi carregado como contexto.<br />
+                Cole os erros da SE38 no campo abaixo e envie — o agente retornará apenas os blocos que precisam de correção.
+              </div>
+            </div>
+          )}
+          {messages.map((msg, i) => <FixMessageBubble key={i} msg={msg} />)}
+          {streaming && <FixStreamBubble text={streamText} />}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Input */}
+        <div style={{
+          padding: '12px 20px', borderTop: '1px solid var(--sap-border)',
+          background: 'var(--sap-base)', flexShrink: 0
+        }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
+            <textarea
+              ref={textareaRef}
+              value={inputText}
+              onChange={e => setInputText(e.target.value)}
+              onKeyDown={handleKeyDown}
+              disabled={streaming}
+              placeholder={streaming
+                ? 'Aguardando resposta...'
+                : 'Cole os erros da SE38 aqui  •  Ex: "Linha 42: Campo MARA-XXXXX não existe na estrutura"'
+              }
+              rows={3}
+              style={{
+                flex: 1, padding: '9px 12px', borderRadius: 6,
+                border: '1px solid var(--sap-border)',
+                background: 'var(--sap-bg)', color: 'var(--sap-text)',
+                fontSize: 13, resize: 'none', fontFamily: 'inherit',
+                lineHeight: 1.5, opacity: streaming ? 0.6 : 1, outline: 'none'
+              }}
+            />
+            <button
+              onClick={handleSend}
+              disabled={!inputText.trim() || streaming}
+              style={{
+                padding: '9px 18px', borderRadius: 6, border: 'none',
+                background: (inputText.trim() && !streaming) ? 'var(--sap-primary, #0070f2)' : 'var(--sap-border)',
+                color: '#fff', fontSize: 13, fontWeight: 600, flexShrink: 0,
+                cursor: (inputText.trim() && !streaming) ? 'pointer' : 'not-allowed',
+                alignSelf: 'flex-end', transition: 'background 0.15s'
+              }}
+            >
+              {streaming ? '...' : 'Enviar'}
+            </button>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--sap-subtle)', marginTop: 5 }}>
+            Informe os erros — o agente retorna somente os blocos alterados. Use <strong>Finalizar</strong> para encerrar.
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -1998,7 +2130,7 @@ function FileBlock({ file }) {
 
 // ─── AbapResultPanel — resultado de geração ao estilo DtecView ────────────────
 
-function AbapResultPanel({ genRaw, genResult, genError, onSave, onNova, saving }) {
+function AbapResultPanel({ genRaw, genResult, genError, onSave, onNova, onFixErrors, saving }) {
   const [copiedAll, setCopiedAll] = useState(false)
 
   const files = genResult?.files || []
@@ -2045,6 +2177,15 @@ function AbapResultPanel({ genRaw, genResult, genError, onSave, onNova, saving }
           border: '1px solid var(--sap-primary)', borderRadius: 4, padding: '5px 12px',
           cursor: 'pointer', fontFamily: 'inherit'
         }}>{copiedAll ? '✓ Copiado' : 'Copiar tudo'}</button>
+        {files.length > 0 && (
+          <button onClick={onFixErrors} style={{
+            fontSize: 12, color: '#bb2222', background: 'transparent',
+            border: '1px solid #bb2222', borderRadius: 4, padding: '5px 12px',
+            cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 5
+          }}>
+            <span style={{ fontSize: 13 }}>⚠</span> Corrigir Erros
+          </button>
+        )}
         <button onClick={onNova} style={{
           fontSize: 12, color: 'var(--sap-text)', background: 'transparent',
           border: '1px solid var(--sap-border)', borderRadius: 4, padding: '5px 12px',
@@ -2146,6 +2287,7 @@ export default function AbapView() {
   const [genError, setGenError] = useState(null)
   const [pendingMeta, setPendingMeta] = useState(null)
   const [saving, setSaving] = useState(false)
+  const [fixPanelOpen, setFixPanelOpen] = useState(false)
 
   const handleStartGenerate = async ({ active, systemPrompt, userPrompt, programName, images, saveMeta }) => {
     setGenPhase('generating')
@@ -2155,6 +2297,9 @@ export default function AbapView() {
     setPendingMeta(saveMeta)
     try {
       let rawText
+      const abapMaxTokens = active.provider === 'claude' ? 32000
+        : active.provider === 'groq' ? 8192
+        : 16384
       if (active.isIntegration) {
         const res = await window.api.generateIntegration({
           integrationType: active.integrationType,
@@ -2166,7 +2311,7 @@ export default function AbapView() {
         if (!res.success) throw new Error(res.error)
         rawText = res.content
       } else {
-        rawText = await callAI(active, systemPrompt, userPrompt, images)
+        rawText = await callAI(active, systemPrompt, userPrompt, images, abapMaxTokens)
       }
       const parsed = parseAbapResponse(rawText)
       setGenRaw(rawText)
@@ -2229,10 +2374,8 @@ export default function AbapView() {
       {/* Keyframes */}
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
-        @keyframes abapPulse {
-          0%, 100% { opacity: 0.35; }
-          50% { opacity: 0.8; }
-        }
+        @keyframes abapPulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.8; } }
+        @keyframes blink { 0%, 100% { opacity: 1 } 50% { opacity: 0 } }
       `}</style>
 
       {/* Page header */}
@@ -2309,6 +2452,7 @@ export default function AbapView() {
             saving={saving}
             onSave={handleSaveResult}
             onNova={handleNovaGeracao}
+            onFixErrors={() => setFixPanelOpen(true)}
           />
         </div>
       )}
@@ -2356,6 +2500,15 @@ export default function AbapView() {
             </div>
           )}
         </div>
+      )}
+
+      {fixPanelOpen && genPhase === 'result' && (genResult?.files?.length || 0) > 0 && (
+        <ErrorFixPanel
+          files={genResult.files}
+          programName={pendingMeta?.name || 'ABAP_PROGRAM'}
+          providers={providers}
+          onClose={() => setFixPanelOpen(false)}
+        />
       )}
 
       {showCreate && (

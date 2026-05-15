@@ -54,7 +54,7 @@ function geminiParts(text, images) {
 
 // ─── Provider Callers ──────────────────────────────────────────────────────────
 
-async function callClaude(apiKey, model, systemPrompt, userPrompt, images) {
+async function callClaude(apiKey, model, systemPrompt, userPrompt, images, maxTokens = 8192) {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -65,7 +65,7 @@ async function callClaude(apiKey, model, systemPrompt, userPrompt, images) {
     },
     body: JSON.stringify({
       model: model || 'claude-sonnet-4-6',
-      max_tokens: 8192,
+      max_tokens: maxTokens,
       system: systemPrompt,
       messages: [{ role: 'user', content: claudeContent(userPrompt, images) }]
     })
@@ -78,7 +78,7 @@ async function callClaude(apiKey, model, systemPrompt, userPrompt, images) {
   return data.content[0].text
 }
 
-async function callGemini(apiKey, model, systemPrompt, userPrompt, images) {
+async function callGemini(apiKey, model, systemPrompt, userPrompt, images, maxTokens = 8192) {
   const modelName = model || 'gemini-2.0-flash'
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
@@ -88,7 +88,7 @@ async function callGemini(apiKey, model, systemPrompt, userPrompt, images) {
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: systemPrompt }] },
         contents: [{ role: 'user', parts: geminiParts(userPrompt, images) }],
-        generationConfig: { maxOutputTokens: 8192, temperature: 0.3 }
+        generationConfig: { maxOutputTokens: maxTokens, temperature: 0.3 }
       })
     }
   )
@@ -100,7 +100,7 @@ async function callGemini(apiKey, model, systemPrompt, userPrompt, images) {
   return data.candidates[0].content.parts[0].text
 }
 
-async function callOpenAI(apiKey, model, systemPrompt, userPrompt, images) {
+async function callOpenAI(apiKey, model, systemPrompt, userPrompt, images, maxTokens = 8192) {
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -113,7 +113,7 @@ async function callOpenAI(apiKey, model, systemPrompt, userPrompt, images) {
         { role: 'system', content: systemPrompt },
         { role: 'user', content: openaiContent(userPrompt, images) }
       ],
-      max_tokens: 8192,
+      max_tokens: maxTokens,
       temperature: 0.3
     })
   })
@@ -125,7 +125,7 @@ async function callOpenAI(apiKey, model, systemPrompt, userPrompt, images) {
   return data.choices[0].message.content
 }
 
-async function callGroq(apiKey, model, systemPrompt, userPrompt, images) {
+async function callGroq(apiKey, model, systemPrompt, userPrompt, images, maxTokens = 8192) {
   // Imagens só para modelos Groq com visão — outros recebem texto puro
   const imgs = groqSupportsVision(model) ? images : null
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -141,7 +141,7 @@ async function callGroq(apiKey, model, systemPrompt, userPrompt, images) {
         { role: 'user', content: openaiContent(userPrompt, imgs) }
       ],
       temperature: 0.3,
-      max_tokens: 8192
+      max_tokens: Math.min(maxTokens, 8192)
     })
   })
   if (!res.ok) {
@@ -161,17 +161,18 @@ async function callGroq(apiKey, model, systemPrompt, userPrompt, images) {
  * @param {Array<{base64: string, mimeType: string, name: string}>} [images]
  * @returns {Promise<string>} raw text response
  */
-export async function callAI(providerConfig, systemPrompt, userPrompt, images) {
+export async function callAI(providerConfig, systemPrompt, userPrompt, images, maxTokens) {
   const { provider, apiKey, model } = providerConfig
+  const mt = maxTokens || 8192
   switch (provider) {
     case 'claude':
-      return callClaude(apiKey, model, systemPrompt, userPrompt, images)
+      return callClaude(apiKey, model, systemPrompt, userPrompt, images, mt)
     case 'gemini':
-      return callGemini(apiKey, model, systemPrompt, userPrompt, images)
+      return callGemini(apiKey, model, systemPrompt, userPrompt, images, mt)
     case 'openai':
-      return callOpenAI(apiKey, model, systemPrompt, userPrompt, images)
+      return callOpenAI(apiKey, model, systemPrompt, userPrompt, images, mt)
     case 'groq':
-      return callGroq(apiKey, model, systemPrompt, userPrompt, images)
+      return callGroq(apiKey, model, systemPrompt, userPrompt, images, mt)
     default:
       throw new Error(`Provedor "${provider}" não suportado`)
   }
