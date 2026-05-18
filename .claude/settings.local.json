@@ -128,7 +128,10 @@
       "Bash(git fetch *)",
       "Bash(Select-Object FullName)",
       "PowerShell(Get-Content \"C:\\\\Users\\\\paulo.oliveira\\\\Desktop\\\\Nova pasta \\(4\\)\\\\debug\\\\abap_response.txt\" -Raw | Select-String -Pattern \".\" | Select-Object -First 1 | ForEach-Object { $_.Line.Substring\\(0, [Math]::Min\\(2000, $_.Line.Length\\)\\) })",
-      "Bash(del test_parser.js test_parser2.js test_parser3.js test_parser4.js)"
+      "Bash(del test_parser.js test_parser2.js test_parser3.js test_parser4.js)",
+      "Bash(Select-Object -First 20)",
+      "Bash(Format-Table FullName)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(list\\(d.get\\('dependencies',{}\\).keys\\(\\)\\)\\)\")"
     ]
   }
 }

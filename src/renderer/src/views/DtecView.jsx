@@ -74,6 +74,9 @@ const mdComponents = {
 
 function DtecDetail({ dtec, onDelete }) {
   const [confirmDel, setConfirmDel] = useState(false)
+  const [wordLoading, setWordLoading] = useState(false)
+  const [wordPath, setWordPath] = useState(null)
+  const [wordError, setWordError] = useState('')
   const d = dtec.content || {}
   const isMarkdown = !!d._markdown
 
@@ -87,6 +90,19 @@ function DtecDetail({ dtec, onDelete }) {
       `LÓGICA DE PROCESSAMENTO\n${d.processing_logic || ''}`,
     ].join('\n')
     navigator.clipboard.writeText(text)
+  }
+
+  const handleGenerateWord = async () => {
+    setWordLoading(true); setWordError(''); setWordPath(null)
+    try {
+      const res = await window.api.generateDtecDoc({ content: d, objectName: dtec.name })
+      if (!res.success) throw new Error(res.error)
+      setWordPath(res.path)
+    } catch (e) {
+      setWordError(`Erro ao gerar Word: ${e.message}`)
+    } finally {
+      setWordLoading(false)
+    }
   }
 
   return (
@@ -109,9 +125,22 @@ function DtecDetail({ dtec, onDelete }) {
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={copyAll} style={{ fontSize: 12, color: 'var(--sap-primary)', background: 'transparent', border: '1px solid var(--sap-primary)', borderRadius: 4, padding: '5px 14px', cursor: 'pointer', fontFamily: 'inherit' }}>Copiar DTec</button>
+          <button onClick={handleGenerateWord} disabled={wordLoading} style={{ fontSize: 12, color: '#107e3e', background: 'transparent', border: '1px solid #107e3e', borderRadius: 4, padding: '5px 14px', cursor: wordLoading ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: wordLoading ? 0.7 : 1 }}>
+            {wordLoading ? '⟳ Gerando...' : '📄 Gerar Word'}
+          </button>
           <button onClick={() => setConfirmDel(true)} style={{ fontSize: 12, color: '#bb0000', background: 'transparent', border: '1px solid #bb0000', borderRadius: 4, padding: '5px 14px', cursor: 'pointer', fontFamily: 'inherit' }}>Excluir</button>
         </div>
       </div>
+
+      {wordError && (
+        <div style={{ marginBottom: 14, padding: '9px 14px', borderRadius: 6, background: '#fff0f0', border: '1px solid #ffcccc', color: '#bb0000', fontSize: 13 }}>{wordError}</div>
+      )}
+      {wordPath && (
+        <div style={{ marginBottom: 14, padding: '9px 14px', borderRadius: 6, background: '#f0faf4', border: '1px solid #b7e4c7', color: '#107e3e', fontSize: 13, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span>✓ Documento Word gerado com sucesso.</span>
+          <button onClick={() => window.api.openEfFile({ path: wordPath })} style={{ fontSize: 12, color: '#107e3e', background: 'transparent', border: '1px solid #107e3e', borderRadius: 4, padding: '3px 12px', cursor: 'pointer', fontFamily: 'inherit' }}>Abrir</button>
+        </div>
+      )}
 
       {confirmDel && (
         <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 6, background: '#fff5f5', border: '1px solid #ffd7d7', fontSize: 13, color: '#bb0000', display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -456,6 +485,7 @@ export default function DtecView() {
                     <button onClick={handleSave} style={{ background: '#107e3e', color: '#fff', border: 'none', borderRadius: 6, padding: '10px 22px', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}>💾 Salvar DTec</button>
                     <button onClick={() => { setGeneratedContent(null); setFiles([]) }} style={{ background: 'transparent', color: 'var(--sap-subtle)', border: '1px solid var(--sap-border)', borderRadius: 6, padding: '10px 18px', fontSize: 13, cursor: 'pointer' }}>↺ Refazer</button>
                   </div>
+                  <p style={{ fontSize: 12, color: 'var(--sap-subtle)', marginTop: 10 }}>Após salvar, use o botão "Gerar Word" na barra do documento para exportar o DOCX.</p>
                 </>
               )}
             </div>

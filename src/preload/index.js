@@ -31,6 +31,9 @@ const api = {
   saveReviewFiles: (payload) => ipcRenderer.invoke('code-review-save-files', payload),
   getReviewDir: (payload) => ipcRenderer.invoke('code-review-get-dir', payload),
 
+  // ─── DTec ──────────────────────────────────────────────────────────────────
+  generateDtecDoc: (payload) => ipcRenderer.invoke('dtec-generate-doc', payload),
+
   // ─── Especificações Funcionais ──────────────────────────────────────────────
   generateEfDoc: (payload) => ipcRenderer.invoke('ef-generate-doc', payload),
   openEfFile: (payload) => ipcRenderer.invoke('ef-open-file', payload),

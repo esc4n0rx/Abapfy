@@ -29,28 +29,34 @@ function buildFirstMessage(session, files) {
 
   let msg = ''
 
-  // Modo EF: inclui conteúdo completo da especificação
-  if (session.ef_data) {
+  // Modo EF puro: EF carregada sem arquivos de programa
+  if (session.ef_data && (!files || files.length === 0)) {
     const efLabel = session.ef_data.formato === 'delta' ? 'Delta EF (Alteração)' : 'Especificação Funcional'
     msg += `Analise a ${efLabel} abaixo e aplique as modificações especificadas no programa ABAP.\n\n`
     msg += `**Versão SAP:** ${sapLabel}\n\n`
     if (session.context?.trim()) msg += `**Descrição resumida:**\n${session.context.trim()}\n\n`
-
     const efContent = cleanEfForPrompt(session.ef_data.rawText, session.ef_data.formato)
-    if (efContent) {
-      msg += `**Conteúdo da ${efLabel}:**\n\`\`\`\n${efContent}\n\`\`\`\n\n`
-    }
+    if (efContent) msg += `**Conteúdo da ${efLabel}:**\n\`\`\`\n${efContent}\n\`\`\`\n\n`
     if (session.ef_data.formato === 'delta') {
       msg += `*Observação: Esta é uma EF de Delta/Alteração — o programa já existe e deve ser modificado conforme especificado.*\n\n`
     }
     return msg
   }
 
-  // Modo Manual
+  // Modo Manual / Híbrido (arquivos + EF opcional)
   msg = 'Analise os programas abaixo e aplique as modificações conforme o contexto fornecido.\n\n'
   msg += `**Versão SAP:** ${sapLabel}\n\n`
   if (session.context?.trim())        msg += `**Contexto / Objetivo:**\n${session.context.trim()}\n\n`
   if (session.business_rules?.trim()) msg += `**Regras de Negócio:**\n${session.business_rules.trim()}\n\n`
+
+  // EF carregada como referência complementar
+  if (session.ef_data) {
+    const efLabel = session.ef_data.formato === 'delta' ? 'Delta EF (Alteração)' : 'Especificação Funcional'
+    const efContent = cleanEfForPrompt(session.ef_data.rawText, session.ef_data.formato)
+    if (efContent) {
+      msg += `**Especificação Funcional de Referência (${efLabel}):**\n\`\`\`\n${efContent}\n\`\`\`\n\n`
+    }
+  }
 
   if (files?.length) {
     msg += `**Arquivos do Programa:**\n\n`
@@ -350,16 +356,16 @@ function StreamingBubble({ text }) {
 
 // ─── New Session Modal ─────────────────────────────────────────────────────────
 function NewSessionModal({ onClose, onCreate }) {
-  const [mode, setMode]           = useState('manual')
-  const [name, setName]           = useState('')
+  const [mode, setMode]             = useState('manual')
+  const [name, setName]             = useState('')
   const [sapVersion, setSapVersion] = useState('ECC_60')
-  const [context, setContext]     = useState('')
+  const [context, setContext]       = useState('')
   const [businessRules, setBusinessRules] = useState('')
-  const [files, setFiles]         = useState([])
-  const [loading, setLoading]     = useState(false)
-  const [efData, setEfData]       = useState(null)
-  const [efLoading, setEfLoading] = useState(false)
-  const [efError, setEfError]     = useState(null)
+  const [files, setFiles]           = useState([])
+  const [loading, setLoading]       = useState(false)
+  const [efData, setEfData]         = useState(null)
+  const [efLoading, setEfLoading]   = useState(false)
+  const [efError, setEfError]       = useState(null)
   const fileInputRef = useRef(null)
 
   const handleFiles = (e) => {
@@ -384,8 +390,8 @@ function NewSessionModal({ onClose, onCreate }) {
       if (res?.success) {
         setEfData(res)
         const fields = efDataToSessionFields(res)
-        if (fields.sessionName) setName(fields.sessionName)
-        if (fields.context)     setContext(fields.context)
+        if (fields.sessionName)   setName(fields.sessionName)
+        if (fields.context)       setContext(fields.context)
         if (fields.businessRules) setBusinessRules(fields.businessRules)
       } else if (res?.docLegacy) {
         setEfError(res.error)
@@ -405,11 +411,10 @@ function NewSessionModal({ onClose, onCreate }) {
       sap_version: sapVersion,
       context,
       business_rules: businessRules,
-      files: mode === 'manual' ? files : [],
-      // Armazena a EF na sessão para gerar a primeira mensagem completa
-      ef_data: mode === 'ef' && efData ? {
-        rawText: efData.rawText,
-        formato: efData.formato,
+      files,
+      ef_data: efData ? {
+        rawText:  efData.rawText,
+        formato:  efData.formato,
         fileName: efData.fileName,
         images:   efData.images || []
       } : null
@@ -422,13 +427,69 @@ function NewSessionModal({ onClose, onCreate }) {
     mode === 'manual' || (mode === 'ef' && efData)
   )
 
+  // ── Shared sub-components ──────────────────────────────────────────────────
+
+  const EfBadge = () => efData ? (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <span style={{ fontSize: 12, color: 'var(--sap-positive)', fontWeight: 600 }}>
+        ✓ {efData.fileName}
+      </span>
+      <span style={{
+        fontSize: 10, padding: '1px 7px', borderRadius: 8, fontWeight: 600,
+        background: efData.formato === 'delta' ? 'rgba(233,115,12,0.12)' : 'rgba(0,112,242,0.1)',
+        color: efData.formato === 'delta' ? '#e9730c' : 'var(--sap-primary, #0070f2)'
+      }}>
+        {efData.formato === 'delta' ? 'Delta EF' : 'EF Clássica'}
+      </span>
+      <span
+        onClick={() => setEfData(null)}
+        style={{ fontSize: 11, color: 'var(--sap-subtle)', cursor: 'pointer', textDecoration: 'underline' }}
+      >remover</span>
+    </div>
+  ) : null
+
+  const FileChips = () => files.length > 0 ? (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+      {files.map(f => (
+        <span key={f.name} style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          padding: '3px 10px', borderRadius: 12, fontSize: 12,
+          background: 'var(--sap-hover-bg)', border: '1px solid var(--sap-border)',
+          color: 'var(--sap-text)', fontFamily: 'monospace'
+        }}>
+          {f.name}
+          <span
+            onClick={() => setFiles(p => p.filter(x => x.name !== f.name))}
+            style={{ cursor: 'pointer', color: 'var(--sap-subtle)', fontSize: 15, lineHeight: 1 }}
+          >×</span>
+        </span>
+      ))}
+    </div>
+  ) : null
+
+  const btnBase = {
+    padding: '8px 14px', borderRadius: 5, fontSize: 12,
+    display: 'flex', alignItems: 'center', gap: 6,
+    cursor: 'pointer', fontFamily: 'inherit', transition: 'border-color 0.15s'
+  }
+  const btnOutline = {
+    ...btnBase,
+    border: '1px dashed var(--sap-border)',
+    background: 'var(--sap-bg)', color: 'var(--sap-subtle)'
+  }
+  const btnEfActive = {
+    ...btnBase,
+    border: '1px solid #e9730c',
+    background: 'rgba(233,115,12,0.06)', color: '#e9730c', fontWeight: 600
+  }
+
   return (
     <div style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
       display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
     }}>
       <div style={{
-        background: 'var(--sap-base)', borderRadius: 10, width: 600,
+        background: 'var(--sap-base)', borderRadius: 10, width: 620,
         maxWidth: '95vw', maxHeight: '92vh', overflowY: 'auto',
         border: '1px solid var(--sap-border)', boxShadow: '0 12px 48px rgba(0,0,0,0.25)'
       }}>
@@ -445,15 +506,24 @@ function NewSessionModal({ onClose, onCreate }) {
         </div>
 
         <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
-          {/* Mode selector */}
+          {/* hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".abap,.txt,.prog,.fugr,.clas,.intf,.doma,.dtel,.tabl,.ddic,.js,.py,.go,.java,.cs,.cpp,.c,.h,.xml,.json"
+            onChange={handleFiles}
+            style={{ display: 'none' }}
+          />
+
+          {/* ── Mode selector ── */}
           <div>
             <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--sap-subtle)', letterSpacing: '0.06em', marginBottom: 10 }}>
               MODO DE OPERAÇÃO
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              {/* Manual */}
               <div
-                onClick={() => { setMode('manual'); setEfData(null); setEfError(null) }}
+                onClick={() => setMode('manual')}
                 style={{
                   padding: '14px 16px', borderRadius: 8, cursor: 'pointer',
                   border: `2px solid ${mode === 'manual' ? 'var(--sap-primary, #0070f2)' : 'var(--sap-border)'}`,
@@ -464,12 +534,11 @@ function NewSessionModal({ onClose, onCreate }) {
                 <div style={{ fontSize: 22, marginBottom: 8 }}>📋</div>
                 <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--sap-text)', marginBottom: 4 }}>Modo Manual</div>
                 <div style={{ fontSize: 11, color: 'var(--sap-subtle)', lineHeight: 1.5 }}>
-                  Carregue arquivos e defina contexto, versão SAP e regras de negócio
+                  Carregue arquivos e defina contexto manualmente. EF opcional.
                 </div>
               </div>
-              {/* EF */}
               <div
-                onClick={() => { setMode('ef'); setFiles([]) }}
+                onClick={() => setMode('ef')}
                 style={{
                   padding: '14px 16px', borderRadius: 8, cursor: 'pointer',
                   border: `2px solid ${mode === 'ef' ? '#e9730c' : 'var(--sap-border)'}`,
@@ -480,197 +549,166 @@ function NewSessionModal({ onClose, onCreate }) {
                 <div style={{ fontSize: 22, marginBottom: 8 }}>📄</div>
                 <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--sap-text)', marginBottom: 4 }}>Carregar EF</div>
                 <div style={{ fontSize: 11, color: 'var(--sap-subtle)', lineHeight: 1.5 }}>
-                  Importa contexto e regras diretamente de uma Especificação Funcional (.docx)
+                  EF como base principal. Arquivos do programa opcionais.
                 </div>
               </div>
             </div>
           </div>
 
-          {/* EF loading section */}
-          {mode === 'ef' && (
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--sap-subtle)', letterSpacing: '0.06em', marginBottom: 8 }}>
-                ESPECIFICAÇÃO FUNCIONAL
+          {/* ── Modo Manual: arquivos + EF opcional ── */}
+          {mode === 'manual' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--sap-subtle)', letterSpacing: '0.06em' }}>
+                ARQUIVOS E CONTEXTO
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button onClick={() => fileInputRef.current?.click()} style={btnOutline}>
+                  ⊕ Carregar Arquivos
+                </button>
                 <button
                   onClick={handleLoadEf}
                   disabled={efLoading}
-                  style={{
-                    padding: '8px 14px', borderRadius: 5,
-                    border: '1px dashed var(--sap-border)',
-                    background: 'var(--sap-bg)', color: 'var(--sap-subtle)',
-                    fontSize: 12, cursor: efLoading ? 'not-allowed' : 'pointer',
-                    display: 'flex', alignItems: 'center', gap: 6
-                  }}
+                  style={efData ? btnEfActive : btnOutline}
                 >
-                  {efLoading ? '⏳ Carregando...' : '📂 Selecionar arquivo .docx'}
+                  {efLoading ? '⏳ Carregando...' : efData ? '📄 EF carregada' : '📄 Carregar EF (opcional)'}
                 </button>
-                {efData && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 12, color: 'var(--sap-positive)', fontWeight: 600 }}>
-                      ✓ {efData.fileName}
-                    </span>
-                    <span style={{
-                      fontSize: 10, padding: '1px 7px', borderRadius: 8, fontWeight: 600,
-                      background: efData.formato === 'delta' ? 'rgba(233,115,12,0.12)' : 'rgba(0,112,242,0.1)',
-                      color: efData.formato === 'delta' ? '#e9730c' : 'var(--sap-primary, #0070f2)'
-                    }}>
-                      {efData.formato === 'delta' ? 'Delta EF' : 'EF Clássica'}
-                    </span>
-                  </div>
-                )}
               </div>
-              {efError && (
-                <div style={{ marginTop: 8, fontSize: 12, color: '#bb0000', lineHeight: 1.5 }}>
-                  ⚠ {efError}
+              <FileChips />
+              {efData && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <EfBadge />
+                  <div style={{ fontSize: 11, color: 'var(--sap-subtle)', padding: '6px 10px', background: 'var(--sap-bg)', borderRadius: 5, lineHeight: 1.5 }}>
+                    A EF será usada como referência complementar junto com os arquivos.
+                  </div>
                 </div>
               )}
-              {efData && (
-                <div style={{ marginTop: 8, padding: '8px 12px', background: 'var(--sap-bg)', borderRadius: 5, fontSize: 12, color: 'var(--sap-subtle)', lineHeight: 1.5 }}>
-                  Os campos abaixo foram preenchidos automaticamente a partir da EF. Você pode ajustá-los antes de iniciar.
+              {efError && <div style={{ fontSize: 12, color: '#bb0000' }}>⚠ {efError}</div>}
+              {files.length === 0 && !efData && (
+                <div style={{ fontSize: 11, color: 'var(--sap-subtle)', lineHeight: 1.5 }}>
+                  Você também pode enviar o código diretamente no chat após criar a sessão.
                 </div>
               )}
             </div>
           )}
 
-          {/* Manual fields */}
-          <>
-            {/* Name */}
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--sap-subtle)', letterSpacing: '0.06em', display: 'block', marginBottom: 7 }}>
-                NOME DA SESSÃO *
-              </label>
-              <input
-                value={name}
-                onChange={e => setName(e.target.value)}
-                placeholder="Ex: Adicionar validação CFOP — ZPEDIDOS_ALV"
-                autoFocus
-                style={{
-                  width: '100%', padding: '9px 12px', borderRadius: 5,
-                  border: `1px solid ${name.trim() ? 'var(--sap-primary, #0070f2)' : 'var(--sap-border)'}`,
-                  background: 'var(--sap-bg)', color: 'var(--sap-text)',
-                  fontSize: 13, boxSizing: 'border-box', outline: 'none',
-                  transition: 'border-color 0.15s'
-                }}
-              />
-            </div>
-
-            {/* SAP Version */}
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--sap-subtle)', letterSpacing: '0.06em', display: 'block', marginBottom: 7 }}>
-                VERSÃO SAP
-              </label>
-              <select
-                value={sapVersion}
-                onChange={e => setSapVersion(e.target.value)}
-                style={{
-                  width: '100%', padding: '9px 12px', borderRadius: 5,
-                  border: '1px solid var(--sap-border)',
-                  background: 'var(--sap-bg)', color: 'var(--sap-text)',
-                  fontSize: 13, boxSizing: 'border-box', cursor: 'pointer', outline: 'none'
-                }}
-              >
-                {SAP_VERSIONS.map(v => (
-                  <option key={v.value} value={v.value}>
-                    {v.label}{v.desc ? ` — ${v.desc}` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Context */}
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--sap-subtle)', letterSpacing: '0.06em', display: 'block', marginBottom: 7 }}>
-                CONTEXTO / OBJETIVO DA MODIFICAÇÃO
-              </label>
-              <textarea
-                value={context}
-                onChange={e => setContext(e.target.value)}
-                placeholder="Descreva o que deseja modificar, melhorar ou corrigir no programa..."
-                rows={3}
-                style={{
-                  width: '100%', padding: '9px 12px', borderRadius: 5,
-                  border: '1px solid var(--sap-border)',
-                  background: 'var(--sap-bg)', color: 'var(--sap-text)',
-                  fontSize: 13, resize: 'vertical', boxSizing: 'border-box',
-                  fontFamily: 'inherit', lineHeight: 1.5, outline: 'none'
-                }}
-              />
-            </div>
-
-            {/* Business Rules */}
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--sap-subtle)', letterSpacing: '0.06em', display: 'block', marginBottom: 7 }}>
-                REGRAS DE NEGÓCIO
-              </label>
-              <textarea
-                value={businessRules}
-                onChange={e => setBusinessRules(e.target.value)}
-                placeholder={'Ex:\n• CFOP deve estar na tabela J_1BCFOP\n• Validar antes de gravar\n• Manter log de alterações'}
-                rows={3}
-                style={{
-                  width: '100%', padding: '9px 12px', borderRadius: 5,
-                  border: '1px solid var(--sap-border)',
-                  background: 'var(--sap-bg)', color: 'var(--sap-text)',
-                  fontSize: 13, resize: 'vertical', boxSizing: 'border-box',
-                  fontFamily: 'inherit', lineHeight: 1.5, outline: 'none'
-                }}
-              />
-            </div>
-
-            {/* Files — apenas no modo manual */}
-            {mode === 'manual' && (
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--sap-subtle)', letterSpacing: '0.06em', display: 'block', marginBottom: 7 }}>
-                  ARQUIVOS DO PROGRAMA
-                </label>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  accept=".abap,.txt,.prog,.fugr,.clas,.intf,.doma,.dtel,.tabl,.ddic,.js,.py,.go,.java,.cs,.cpp,.c,.h,.xml,.json"
-                  onChange={handleFiles}
-                  style={{ display: 'none' }}
-                />
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  style={{
-                    padding: '8px 14px', borderRadius: 5,
-                    border: '1px dashed var(--sap-border)',
-                    background: 'var(--sap-bg)', color: 'var(--sap-subtle)',
-                    fontSize: 12, cursor: 'pointer', marginBottom: 8,
-                    display: 'flex', alignItems: 'center', gap: 6, transition: 'border-color 0.15s'
-                  }}
-                >
-                  ⊕ Adicionar arquivo(s)
-                </button>
-                {files.length > 0 && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {files.map(f => (
-                      <span key={f.name} style={{
-                        display: 'inline-flex', alignItems: 'center', gap: 6,
-                        padding: '3px 10px', borderRadius: 12, fontSize: 12,
-                        background: 'var(--sap-hover-bg)', border: '1px solid var(--sap-border)',
-                        color: 'var(--sap-text)', fontFamily: 'monospace'
-                      }}>
-                        {f.name}
-                        <span
-                          onClick={() => setFiles(p => p.filter(x => x.name !== f.name))}
-                          style={{ cursor: 'pointer', color: 'var(--sap-subtle)', fontSize: 15, lineHeight: 1 }}
-                        >×</span>
-                      </span>
-                    ))}
-                  </div>
-                )}
-                {files.length === 0 && (
-                  <div style={{ fontSize: 11, color: 'var(--sap-subtle)', lineHeight: 1.5 }}>
-                    Você também pode enviar o código diretamente no chat após criar a sessão.
-                  </div>
-                )}
+          {/* ── Modo EF: EF padrão + arquivos opcionais ── */}
+          {mode === 'ef' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--sap-subtle)', letterSpacing: '0.06em' }}>
+                ESPECIFICAÇÃO FUNCIONAL E ARQUIVOS
               </div>
-            )}
-          </>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  onClick={handleLoadEf}
+                  disabled={efLoading}
+                  style={efData ? btnEfActive : { ...btnOutline, border: '1px dashed #e9730c', color: '#e9730c' }}
+                >
+                  {efLoading ? '⏳ Carregando...' : efData ? '📄 EF carregada' : '📄 Carregar EF (padrão)'}
+                </button>
+                <button onClick={() => fileInputRef.current?.click()} style={btnOutline}>
+                  ⊕ Carregar Arquivos
+                </button>
+              </div>
+              {efData && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <EfBadge />
+                  <div style={{ fontSize: 11, color: 'var(--sap-subtle)', padding: '6px 10px', background: 'var(--sap-bg)', borderRadius: 5, lineHeight: 1.5 }}>
+                    Contexto e regras preenchidos automaticamente. Ajuste abaixo se necessário.
+                  </div>
+                </div>
+              )}
+              <FileChips />
+              {efError && <div style={{ fontSize: 12, color: '#bb0000' }}>⚠ {efError}</div>}
+              {!efData && (
+                <div style={{ fontSize: 11, color: '#e9730c', lineHeight: 1.5 }}>
+                  Carregue ao menos uma EF (.docx) para iniciar neste modo.
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Nome da sessão ── */}
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--sap-subtle)', letterSpacing: '0.06em', display: 'block', marginBottom: 7 }}>
+              NOME DA SESSÃO *
+            </label>
+            <input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="Ex: Adicionar validação CFOP — ZPEDIDOS_ALV"
+              autoFocus
+              style={{
+                width: '100%', padding: '9px 12px', borderRadius: 5,
+                border: `1px solid ${name.trim() ? 'var(--sap-primary, #0070f2)' : 'var(--sap-border)'}`,
+                background: 'var(--sap-bg)', color: 'var(--sap-text)',
+                fontSize: 13, boxSizing: 'border-box', outline: 'none',
+                transition: 'border-color 0.15s'
+              }}
+            />
+          </div>
+
+          {/* ── Versão SAP ── */}
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--sap-subtle)', letterSpacing: '0.06em', display: 'block', marginBottom: 7 }}>
+              VERSÃO SAP
+            </label>
+            <select
+              value={sapVersion}
+              onChange={e => setSapVersion(e.target.value)}
+              style={{
+                width: '100%', padding: '9px 12px', borderRadius: 5,
+                border: '1px solid var(--sap-border)',
+                background: 'var(--sap-bg)', color: 'var(--sap-text)',
+                fontSize: 13, boxSizing: 'border-box', cursor: 'pointer', outline: 'none'
+              }}
+            >
+              {SAP_VERSIONS.map(v => (
+                <option key={v.value} value={v.value}>
+                  {v.label}{v.desc ? ` — ${v.desc}` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* ── Contexto ── */}
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--sap-subtle)', letterSpacing: '0.06em', display: 'block', marginBottom: 7 }}>
+              CONTEXTO / OBJETIVO DA MODIFICAÇÃO
+            </label>
+            <textarea
+              value={context}
+              onChange={e => setContext(e.target.value)}
+              placeholder="Descreva o que deseja modificar, melhorar ou corrigir no programa..."
+              rows={3}
+              style={{
+                width: '100%', padding: '9px 12px', borderRadius: 5,
+                border: '1px solid var(--sap-border)',
+                background: 'var(--sap-bg)', color: 'var(--sap-text)',
+                fontSize: 13, resize: 'vertical', boxSizing: 'border-box',
+                fontFamily: 'inherit', lineHeight: 1.5, outline: 'none'
+              }}
+            />
+          </div>
+
+          {/* ── Regras de negócio ── */}
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--sap-subtle)', letterSpacing: '0.06em', display: 'block', marginBottom: 7 }}>
+              REGRAS DE NEGÓCIO
+            </label>
+            <textarea
+              value={businessRules}
+              onChange={e => setBusinessRules(e.target.value)}
+              placeholder={'Ex:\n• CFOP deve estar na tabela J_1BCFOP\n• Validar antes de gravar\n• Manter log de alterações'}
+              rows={3}
+              style={{
+                width: '100%', padding: '9px 12px', borderRadius: 5,
+                border: '1px solid var(--sap-border)',
+                background: 'var(--sap-bg)', color: 'var(--sap-text)',
+                fontSize: 13, resize: 'vertical', boxSizing: 'border-box',
+                fontFamily: 'inherit', lineHeight: 1.5, outline: 'none'
+              }}
+            />
+          </div>
         </div>
 
         {/* Footer */}
@@ -910,7 +948,7 @@ export default function EditorView() {
     const sessionWithEf = payload.ef_data
       ? { ...res.session, ef_data: payload.ef_data }
       : res.session
-    await sendMessage(sessionWithEf, null, payload.ef_data ? [] : payload.files)
+    await sendMessage(sessionWithEf, null, payload.files || [])
   }
 
   const handleSend = async () => {

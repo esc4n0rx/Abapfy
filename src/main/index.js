@@ -210,6 +210,269 @@ function replaceDocxText(buffer, replacements) {
   return zip.generate({ type: 'nodebuffer' })
 }
 
+// ─── DTec: Geração de DOCX programática (sem template) ──────────────────────
+
+function dtecRun(text, opts = {}) {
+  let rPr = ''
+  if (opts.bold)   rPr += '<w:b/>'
+  if (opts.italic) rPr += '<w:i/>'
+  if (opts.mono)   rPr += '<w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:cs="Courier New"/>'
+  if (opts.color)  rPr += `<w:color w:val="${opts.color}"/>`
+  if (opts.sz)     rPr += `<w:sz w:val="${opts.sz}"/><w:szCs w:val="${opts.sz}"/>`
+  const rPrXml = rPr ? `<w:rPr>${rPr}</w:rPr>` : ''
+  return `<w:r>${rPrXml}<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r>`
+}
+
+function dtecPara(runs, styleId = 'Normal', pPrExtra = '') {
+  return `<w:p><w:pPr><w:pStyle w:val="${styleId}"/>${pPrExtra}</w:pPr>${runs}</w:p>`
+}
+
+function dtecListItem(text, level = 0) {
+  const indent = 360 + level * 360
+  const pPrExtra = `<w:ind w:left="${indent}" w:hanging="240"/>`
+  return `<w:p><w:pPr><w:pStyle w:val="Normal"/>${pPrExtra}</w:pPr>${dtecRun('• ')}${mdInlineToRuns(text)}</w:p>`
+}
+
+function mdInlineToRuns(line) {
+  const re = /(\*\*([^*]+)\*\*|\*([^*]+)\*|`([^`]+)`)/g
+  const runs = []
+  let lastIdx = 0
+  let match
+  while ((match = re.exec(line)) !== null) {
+    if (match.index > lastIdx) runs.push(dtecRun(line.slice(lastIdx, match.index)))
+    if (match[2])      runs.push(dtecRun(match[2], { bold: true }))
+    else if (match[3]) runs.push(dtecRun(match[3], { italic: true }))
+    else if (match[4]) runs.push(dtecRun(match[4], { mono: true, color: '0050B3' }))
+    lastIdx = match.index + match[0].length
+  }
+  if (lastIdx < line.length) runs.push(dtecRun(line.slice(lastIdx)))
+  return runs.join('')
+}
+
+function buildDtecWordTable(tableLines) {
+  const rows = tableLines.filter(line => !/^\|[\s|:-]+\|$/.test(line.trim()))
+  const tableRows = rows.map((row, rowIdx) => {
+    const cells = row.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim())
+    const isHeader = rowIdx === 0
+    const cellXmls = cells.map(cell => {
+      const shd = isHeader ? '<w:shd w:val="clear" w:color="auto" w:fill="0070F2"/>' : '<w:shd w:val="clear" w:color="auto" w:fill="FFFFFF"/>'
+      const borders = '<w:tcBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="CCCCCC"/><w:left w:val="single" w:sz="4" w:space="0" w:color="CCCCCC"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="CCCCCC"/><w:right w:val="single" w:sz="4" w:space="0" w:color="CCCCCC"/></w:tcBorders>'
+      const tcProps = `<w:tcPr>${shd}${borders}<w:tcMar><w:top w:w="80" w:type="dxa"/><w:left w:w="120" w:type="dxa"/><w:bottom w:w="80" w:type="dxa"/><w:right w:w="120" w:type="dxa"/></w:tcMar></w:tcPr>`
+      const cellRuns = isHeader
+        ? `<w:r><w:rPr><w:b/><w:color w:val="FFFFFF"/></w:rPr><w:t xml:space="preserve">${xmlEscape(cell)}</w:t></w:r>`
+        : mdInlineToRuns(cell)
+      return `<w:tc>${tcProps}<w:p>${cellRuns}</w:p></w:tc>`
+    })
+    return `<w:tr>${cellXmls.join('')}</w:tr>`
+  })
+  return `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="CCCCCC"/><w:left w:val="single" w:sz="4" w:space="0" w:color="CCCCCC"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="CCCCCC"/><w:right w:val="single" w:sz="4" w:space="0" w:color="CCCCCC"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="CCCCCC"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="CCCCCC"/></w:tblBorders></w:tblPr>${tableRows.join('')}</w:tbl><w:p/>`
+}
+
+function parseMdToDtecXml(markdown) {
+  const lines = (markdown || '').split('\n')
+  const parts = []
+  let i = 0
+  while (i < lines.length) {
+    const raw = lines[i]
+    const trimmed = raw.trim()
+
+    if (trimmed.startsWith('#### ')) {
+      parts.push(dtecPara(mdInlineToRuns(trimmed.slice(5)), 'DTecH3')); i++; continue
+    }
+    if (trimmed.startsWith('### ')) {
+      parts.push(dtecPara(mdInlineToRuns(trimmed.slice(4)), 'DTecH3')); i++; continue
+    }
+    if (trimmed.startsWith('## ')) {
+      parts.push(dtecPara(mdInlineToRuns(trimmed.slice(3)), 'DTecH2')); i++; continue
+    }
+    if (trimmed.startsWith('# ')) {
+      parts.push(dtecPara(mdInlineToRuns(trimmed.slice(2)), 'DTecH1')); i++; continue
+    }
+    if (/^[-*_]{3,}$/.test(trimmed)) { i++; continue }
+
+    if (trimmed.startsWith('```')) {
+      i++
+      const codeLines = []
+      while (i < lines.length && !lines[i].trim().startsWith('```')) {
+        codeLines.push(lines[i]); i++
+      }
+      i++
+      for (const cl of codeLines) {
+        parts.push(dtecPara(dtecRun(cl || ' ', { mono: true }), 'DTecCode'))
+      }
+      continue
+    }
+
+    if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+      const tableLines = []
+      while (i < lines.length && lines[i].trim().startsWith('|') && lines[i].trim().endsWith('|')) {
+        tableLines.push(lines[i]); i++
+      }
+      parts.push(buildDtecWordTable(tableLines))
+      continue
+    }
+
+    if (trimmed.startsWith('> ')) {
+      parts.push(dtecPara(mdInlineToRuns(trimmed.slice(2)), 'DTecQuote')); i++; continue
+    }
+    if (/^[-*+] /.test(trimmed)) {
+      const level = Math.floor((raw.length - raw.trimStart().length) / 2)
+      parts.push(dtecListItem(trimmed.slice(2), level)); i++; continue
+    }
+    if (/^\d+\. /.test(trimmed)) {
+      const text = trimmed.replace(/^\d+\. /, '')
+      parts.push(dtecListItem(text)); i++; continue
+    }
+    if (!trimmed) { i++; continue }
+
+    parts.push(dtecPara(mdInlineToRuns(trimmed), 'Normal')); i++
+  }
+  return parts.join('')
+}
+
+function buildDtecJsonXml(content, objectName) {
+  const parts = []
+  const title = content.object_name || objectName || 'Documentação Técnica'
+  parts.push(dtecPara(dtecRun(title), 'DTecTitle'))
+  if (content.object_type || content.sap_module) {
+    const sub = [content.object_type, content.sap_module].filter(Boolean).join('  |  ')
+    parts.push(dtecPara(dtecRun(sub), 'DTecSubtitle'))
+  }
+  const now = new Date().toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+  parts.push(dtecPara(dtecRun(`Gerado em: ${now}`), 'DTecMeta'))
+  parts.push('<w:p/>')
+
+  const textSections = [
+    { key: 'objective',         label: '1. Objetivo' },
+    { key: 'structure',         label: '2. Estrutura Técnica' },
+    { key: 'parameters',        label: '4. Parâmetros e Interface' },
+    { key: 'processing_logic',  label: '5. Lógica de Processamento' },
+    { key: 'error_handling',    label: '6. Tratamento de Erros' },
+    { key: 'performance_notes', label: '8. Considerações de Performance' },
+  ]
+  for (const { key, label } of textSections) {
+    if (!content[key]) continue
+    parts.push(dtecPara(dtecRun(label), 'DTecH1'))
+    parts.push(parseMdToDtecXml(String(content[key])))
+    parts.push('<w:p/>')
+  }
+
+  if (content.tables?.length > 0) {
+    parts.push(dtecPara(dtecRun('3. Tabelas e Estruturas SAP'), 'DTecH1'))
+    const rows = [
+      '| Tabela | Descrição | Uso |',
+      '|--------|-----------|-----|',
+      ...content.tables.map(t => `| ${t.name || ''} | ${t.description || ''} | ${t.usage || ''} |`)
+    ]
+    parts.push(buildDtecWordTable(rows))
+  }
+
+  if (content.dependencies?.length > 0) {
+    parts.push(dtecPara(dtecRun('7. Dependências'), 'DTecH1'))
+    const rows = [
+      '| Tipo | Nome | Descrição |',
+      '|------|------|-----------|',
+      ...content.dependencies.map(d => `| ${d.type || ''} | ${d.name || ''} | ${d.description || ''} |`)
+    ]
+    parts.push(buildDtecWordTable(rows))
+  }
+
+  if (content.change_log_template) {
+    parts.push(dtecPara(dtecRun('9. Template — Histórico de Alterações'), 'DTecH1'))
+    for (const line of String(content.change_log_template).split('\n')) {
+      parts.push(dtecPara(dtecRun(line || ' ', { mono: true }), 'DTecCode'))
+    }
+    parts.push('<w:p/>')
+  }
+
+  return parts.join('')
+}
+
+function buildDtecDocxStyles() {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:default="1" w:styleId="Normal">
+    <w:name w:val="Normal"/>
+    <w:pPr><w:spacing w:after="120" w:line="276" w:lineRule="auto"/></w:pPr>
+    <w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:cs="Arial"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="DTecTitle">
+    <w:name w:val="DTecTitle"/>
+    <w:pPr><w:jc w:val="center"/><w:spacing w:before="0" w:after="200"/><w:shd w:val="clear" w:color="auto" w:fill="0070F2"/></w:pPr>
+    <w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:b/><w:sz w:val="38"/><w:szCs w:val="38"/><w:color w:val="FFFFFF"/></w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="DTecSubtitle">
+    <w:name w:val="DTecSubtitle"/>
+    <w:pPr><w:jc w:val="center"/><w:spacing w:before="60" w:after="60"/><w:shd w:val="clear" w:color="auto" w:fill="E8F3FF"/></w:pPr>
+    <w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:color w:val="0050B3"/></w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="DTecMeta">
+    <w:name w:val="DTecMeta"/>
+    <w:pPr><w:jc w:val="center"/><w:spacing w:before="60" w:after="280"/></w:pPr>
+    <w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:i/><w:sz w:val="18"/><w:szCs w:val="18"/><w:color w:val="6A6D70"/></w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="DTecH1">
+    <w:name w:val="heading 1"/>
+    <w:pPr><w:spacing w:before="320" w:after="100"/><w:shd w:val="clear" w:color="auto" w:fill="E8F1FB"/><w:pBdr><w:left w:val="single" w:sz="18" w:space="4" w:color="0070F2"/></w:pBdr><w:ind w:left="180"/></w:pPr>
+    <w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:b/><w:sz w:val="26"/><w:szCs w:val="26"/><w:color w:val="0050B3"/></w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="DTecH2">
+    <w:name w:val="heading 2"/>
+    <w:pPr><w:spacing w:before="240" w:after="80"/><w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="0070F2"/></w:pBdr></w:pPr>
+    <w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:b/><w:sz w:val="24"/><w:szCs w:val="24"/><w:color w:val="0070F2"/></w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="DTecH3">
+    <w:name w:val="heading 3"/>
+    <w:pPr><w:spacing w:before="160" w:after="60"/></w:pPr>
+    <w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:b/><w:sz w:val="22"/><w:szCs w:val="22"/><w:color w:val="354A5E"/></w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="DTecCode">
+    <w:name w:val="DTecCode"/>
+    <w:pPr><w:spacing w:before="40" w:after="40"/><w:shd w:val="clear" w:color="auto" w:fill="F4F6F9"/><w:pBdr><w:left w:val="single" w:sz="12" w:space="4" w:color="AAAAAA"/></w:pBdr><w:ind w:left="360"/></w:pPr>
+    <w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:cs="Courier New"/><w:sz w:val="18"/><w:szCs w:val="18"/><w:color w:val="333333"/></w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="DTecQuote">
+    <w:name w:val="DTecQuote"/>
+    <w:pPr><w:spacing w:before="80" w:after="80"/><w:shd w:val="clear" w:color="auto" w:fill="EFF6FF"/><w:pBdr><w:left w:val="single" w:sz="12" w:space="4" w:color="0070F2"/></w:pBdr><w:ind w:left="360"/></w:pPr>
+    <w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:i/><w:sz w:val="20"/><w:szCs w:val="20"/><w:color w:val="354A5E"/></w:rPr>
+  </w:style>
+  <w:style w:type="table" w:styleId="TableGrid">
+    <w:name w:val="Table Grid"/>
+  </w:style>
+</w:styles>`
+}
+
+function buildDtecDocx(content, objectName) {
+  const zip = new PizZip()
+  const isMarkdown = !!content._markdown
+
+  let titleForDoc = content.object_name || objectName || 'Documentação Técnica'
+  let bodyXml
+  if (isMarkdown) {
+    bodyXml = dtecPara(dtecRun(titleForDoc), 'DTecTitle')
+    const now = new Date().toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    bodyXml += dtecPara(dtecRun(`Gerado em: ${now}`), 'DTecMeta')
+    bodyXml += '<w:p/>'
+    bodyXml += parseMdToDtecXml(content._markdown)
+  } else {
+    bodyXml = buildDtecJsonXml(content, objectName)
+  }
+
+  zip.file('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/></Types>`)
+
+  zip.file('_rels/.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`)
+
+  zip.file('word/_rels/document.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/></Relationships>`)
+
+  zip.file('word/settings.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:defaultTabStop w:val="708"/></w:settings>`)
+
+  zip.file('word/styles.xml', buildDtecDocxStyles())
+
+  zip.file('word/document.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>${bodyXml}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1417" w:right="1134" w:bottom="1417" w:left="1134" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>`)
+
+  return zip.generate({ type: 'nodebuffer' })
+}
+
 // ─── Helper: Extrai parágrafos de texto + rIds de imagem de um XML DOCX ───────
 // Retorna array de { text: string, rIds: string[] }
 function extractDocxParagraphs(xml) {
@@ -975,6 +1238,26 @@ app.whenReady().then(() => {
       return { success: true, path: outputPath }
     } catch (err) {
       console.error('[EF-GENERATE] Erro:', err.message)
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ─── DTec: Gera DOCX estruturado sem template ───────────────────────────────
+  ipcMain.handle('dtec-generate-doc', async (_, { content, objectName }) => {
+    try {
+      const buffer = buildDtecDocx(content, objectName)
+      const safeName = (content.object_name || objectName || 'DTec')
+        .replace(/[^a-zA-Z0-9À-ɏ\s_-]/g, '')
+        .trim().replace(/\s+/g, '_').slice(0, 60)
+      const outputDir = nodePath.join(app.getPath('documents'), 'Abapfy', 'DTec')
+      fs.mkdirSync(outputDir, { recursive: true })
+      const filename = `DTec_${safeName}_${Date.now()}.docx`
+      const outputPath = nodePath.join(outputDir, filename)
+      fs.writeFileSync(outputPath, buffer)
+      console.log(`[DTEC-GENERATE] Documento gerado: ${outputPath}`)
+      return { success: true, path: outputPath }
+    } catch (err) {
+      console.error('[DTEC-GENERATE] Erro:', err.message)
       return { success: false, error: err.message }
     }
   })
